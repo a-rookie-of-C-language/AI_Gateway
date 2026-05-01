@@ -7,12 +7,13 @@
     Json,
 };
 
+use crate::domain::core::tenant_access_control::TenantIdentity::TenantIdentity;
 use crate::interfaces::http::middleware::MiddlewareState::MiddlewareState;
 use crate::shared::response;
 
 pub async fn auth(
     State(state): State<MiddlewareState>,
-    req: Request<Body>,
+    mut req: Request<Body>,
     next: Next,
 ) -> Result<Response, (StatusCode, Json<serde_json::Value>)> {
     let auth_header = req
@@ -25,6 +26,11 @@ pub async fn auth(
     if auth_header != expected {
         return Err(response::err(StatusCode::UNAUTHORIZED, "invalid api key"));
     }
+
+    req.extensions_mut().insert(TenantIdentity {
+        tenant_id: "default-tenant".to_string(),
+        app_id: "default-app".to_string(),
+    });
 
     Ok(next.run(req).await)
 }

@@ -1,4 +1,7 @@
-﻿use std::sync::Arc;
+﻿use std::sync::{
+    atomic::AtomicU64,
+    Arc,
+};
 
 use anyhow::Result;
 use axum::middleware;
@@ -6,6 +9,7 @@ use axum::middleware;
 use crate::application::chat::ChatAppService::ChatAppService;
 use crate::bootstrap::App::App;
 use crate::config::Config;
+use crate::domain::core::quota_billing::QuotaPolicy::QuotaPolicy;
 use crate::domain::supporting::traffic_governance::RateLimitDao::RateLimitDao;
 use crate::infrastructure::dao::ratelimit::RedisRateLimitDao::RedisRateLimitDao;
 use crate::infrastructure::http::AppState::AppState;
@@ -22,7 +26,15 @@ pub async fn build_app() -> Result<App> {
     let redis_client = redis::Client::open(cfg.redis_addr.clone())?;
     let rate_limit_dao: Arc<dyn RateLimitDao> = Arc::new(RedisRateLimitDao::new(redis_client));
 
-    let app_state = AppState { chat_service };
+    let app_state = AppState {
+        chat_service,
+        quota_policy: QuotaPolicy {
+            plan_code: "default".to_string(),
+            max_tokens_per_day: 1_000_000,
+        },
+        used_tokens_today: Arc::new(AtomicU64::new(0)),
+    };
+
     let middleware_state = MiddlewareState {
         master_api_key: cfg.master_api_key,
         rate_limit_per_min: cfg.rate_limit_per_min,
