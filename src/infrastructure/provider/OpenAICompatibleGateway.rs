@@ -1,8 +1,10 @@
 ﻿use async_trait::async_trait;
-use futures_util::StreamExt;
+use futures_util::stream::BoxStream;
 use reqwest::Client;
 use serde_json::Value;
 use std::time::Duration;
+use tokio::sync::mpsc;
+use tokio_stream::wrappers::ReceiverStream;
 
 use crate::domain::core::gateway_orchestration::ChatGateway::ChatGateway;
 use crate::domain::core::gateway_orchestration::CompletionRequest::CompletionRequest;
@@ -89,7 +91,7 @@ impl ChatGateway for OpenAICompatibleGateway {
         })
     }
 
-    async fn stream_complete(&self, req: CompletionRequest) -> anyhow::Result<Vec<Value>> {
+    async fn stream_complete(&self, req: CompletionRequest) -> anyhow::Result<BoxStream<'static, anyhow::Result<Value>>> {
         let model = req
             .model
             .clone()
@@ -120,32 +122,49 @@ impl ChatGateway for OpenAICompatibleGateway {
             anyhow::bail!("provider stream failed: status={}, body={}", status, body);
         }
 
-        let mut raw_events: Vec<Value> = Vec::new();
-        let mut stream = response.bytes_stream();
-        let mut buf = String::new();
+        let mut upstream = response.bytes_stream();
+        let (tx, rx) = mpsc::channel::<anyhow::Result<Value>>(128);
 
-        while let Some(item) = stream.next().await {
-            let bytes = item?;
-            buf.push_str(&String::from_utf8_lossy(&bytes));
+        tokio::spawn(async move {
+            use futures_util::StreamExt;
+            let mut buf = String::new();
+            while let Some(item) = upstream.next().await {
+                match item {
+                    Ok(bytes) => {
+                        buf.push_str(&String::from_utf8_lossy(&bytes));
+                        while let Some(idx) = buf.find('\n') {
+                            let line = buf[..idx].trim().to_string();
+                            buf = buf[idx + 1..].to_string();
 
-            while let Some(idx) = buf.find('\n') {
-                let line = buf[..idx].trim().to_string();
-                buf = buf[idx + 1..].to_string();
-
-                if !line.starts_with("data:") {
-                    continue;
+                            if !line.starts_with("data:") {
+                                continue;
+                            }
+                            let payload = line.trim_start_matches("data:").trim();
+                            if payload == "[DONE]" {
+                                continue;
+                            }
+                            match serde_json::from_str::<Value>(payload) {
+                                Ok(node) => {
+                                    if tx.send(Ok(node)).await.is_err() {
+                                        return;
+                                    }
+                                }
+                                Err(e) => {
+                                    if tx.send(Err(anyhow::anyhow!(e))).await.is_err() {
+                                        return;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        let _ = tx.send(Err(anyhow::anyhow!(e))).await;
+                        return;
+                    }
                 }
-                let payload = line.trim_start_matches("data:").trim();
-                if payload == "[DONE]" {
-                    continue;
-                }
-                let Ok(node) = serde_json::from_str::<Value>(payload) else {
-                    continue;
-                };
-                raw_events.push(node);
             }
-        }
+        });
 
-        Ok(raw_events)
+        Ok(Box::pin(ReceiverStream::new(rx)))
     }
 }

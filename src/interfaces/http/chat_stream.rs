@@ -6,7 +6,7 @@ use axum::{
     response::sse::{Event, Sse},
     Json,
 };
-use tokio_stream::iter;
+use futures_util::{stream, StreamExt};
 
 use crate::domain::core::gateway_orchestration::CompletionRequest::CompletionRequest;
 use crate::domain::core::tenant_access_control::TenantIdentity::TenantIdentity;
@@ -19,7 +19,7 @@ pub async fn chat_stream(
     Extension(tenant): Extension<TenantIdentity>,
     headers: HeaderMap,
     Json(payload): Json<CompletionRequest>,
-) -> Result<Sse<impl futures_util::Stream<Item = Result<Event, Infallible>>>, (StatusCode, Json<serde_json::Value>)> {
+) -> Result<Sse<futures_util::stream::BoxStream<'static, Result<Event, Infallible>>>, (StatusCode, Json<serde_json::Value>)> {
     let estimated_tokens: u64 = payload
         .messages
         .iter()
@@ -50,23 +50,31 @@ pub async fn chat_stream(
         "chat stream request"
     );
 
-    let events = match state.chat_service.stream_complete(payload).await {
-        Ok(raw_nodes) => {
-            let mut evs: Vec<Result<Event, Infallible>> = Vec::new();
-            for node in raw_nodes {
-                tracing::info!(request_id = %trace.request_id, raw = %node, "provider raw event");
-                evs.push(Ok(Event::default().event("raw").data(node.to_string())));
-            }
-            evs.push(Ok(Event::default().event("done").data("{\"finish_reason\":\"stop\"}")));
-            evs
+    let merged: futures_util::stream::BoxStream<'static, Result<Event, Infallible>> = match state.chat_service.stream_complete(payload).await {
+        Ok(upstream) => {
+            let trace_id = trace.request_id.clone();
+            let out = upstream.map(move |item| -> Result<Event, Infallible> {
+                match item {
+                    Ok(node) => {
+                        tracing::info!(request_id = %trace_id, raw = %node, "provider raw event");
+                        Ok(Event::default().event("raw").data(node.to_string()))
+                    }
+                    Err(err) => Ok(Event::default().event("error").data(
+                        serde_json::json!({"message": err.to_string()}).to_string(),
+                    )),
+                }
+            });
+            let done = stream::iter(vec![Ok(Event::default().event("done").data("{\"finish_reason\":\"stop\"}"))]);
+            Box::pin(out.chain(done))
         }
         Err(err) => {
-            vec![
+            let evs = stream::iter(vec![
                 Ok(Event::default().event("error").data(serde_json::json!({"message": err.to_string()}).to_string())),
                 Ok(Event::default().event("done").data("{\"finish_reason\":\"error\"}")),
-            ]
+            ]);
+            Box::pin(evs)
         }
     };
 
-    Ok(Sse::new(iter(events)))
+    Ok(Sse::new(merged))
 }

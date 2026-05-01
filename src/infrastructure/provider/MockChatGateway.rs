@@ -1,4 +1,5 @@
 ﻿use async_trait::async_trait;
+use futures_util::stream::{self, BoxStream};
 use serde_json::json;
 
 use crate::domain::core::gateway_orchestration::ChatGateway::ChatGateway;
@@ -16,12 +17,13 @@ impl ChatGateway for MockChatGateway {
         })
     }
 
-    async fn stream_complete(&self, _req: CompletionRequest) -> anyhow::Result<Vec<serde_json::Value>> {
-        Ok(vec![
-            json!({"type":"delta","text":"AIGateway "}),
-            json!({"type":"delta","text":"mock "}),
-            json!({"type":"delta","text":"stream "}),
-            json!({"type":"delta","text":"response"}),
-        ])
+    async fn stream_complete(&self, _req: CompletionRequest) -> anyhow::Result<BoxStream<'static, anyhow::Result<serde_json::Value>>> {
+        let items = vec![
+            Ok(json!({"type":"delta","text":"AIGateway "})),
+            Ok(json!({"type":"delta","text":"mock "})),
+            Ok(json!({"type":"delta","text":"stream "})),
+            Ok(json!({"type":"delta","text":"response"})),
+        ];
+        Ok(Box::pin(stream::iter(items)))
     }
 }
