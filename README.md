@@ -92,7 +92,7 @@ cargo run
 
 ## 下一步建议
 
-1. 将 `MockChatGateway` 替换成真实 OpenAI 兼容 Provider（含 stream）。
+1. 补充 OpenAI 兼容流式转发（SSE）并对齐 `event: delta/sources/done/error`。
 2. 限流从 INCR+EXPIRE 升级为 Lua 滑动窗口脚本。
 3. 增加 token 统计与计费聚合（PostgreSQL + 异步任务）。
 4. 如需贴合你的习惯，可把 `interfaces/http` 迁移到 `rust-spring` 风格 Controller。

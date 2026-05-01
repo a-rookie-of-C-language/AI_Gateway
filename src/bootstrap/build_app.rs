@@ -14,13 +14,18 @@ use crate::domain::supporting::traffic_governance::RateLimitDao::RateLimitDao;
 use crate::infrastructure::dao::ratelimit::RedisRateLimitDao::RedisRateLimitDao;
 use crate::infrastructure::http::AppState::AppState;
 use crate::infrastructure::http::build_router::build_router;
-use crate::infrastructure::provider::MockChatGateway::MockChatGateway;
+use crate::infrastructure::provider::OpenAICompatibleGateway::OpenAICompatibleGateway;
 use crate::interfaces::http::middleware::MiddlewareState::MiddlewareState;
 
 pub async fn build_app() -> Result<App> {
     let cfg = Config::load();
 
-    let provider = Arc::new(MockChatGateway);
+    let provider = Arc::new(OpenAICompatibleGateway::new(
+        cfg.provider_base_url.clone(),
+        cfg.provider_api_key.clone(),
+        cfg.provider_model.clone(),
+        cfg.provider_timeout_sec,
+    )?);
     let chat_service = Arc::new(ChatAppService::new(provider));
 
     let redis_client = redis::Client::open(cfg.redis_addr.clone())?;
