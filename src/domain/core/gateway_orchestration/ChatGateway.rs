@@ -6,4 +6,5 @@ use crate::domain::core::gateway_orchestration::CompletionResult::CompletionResu
 #[async_trait]
 pub trait ChatGateway: Send + Sync {
     async fn complete(&self, req: CompletionRequest) -> anyhow::Result<CompletionResult>;
+    async fn stream_complete(&self, req: CompletionRequest) -> anyhow::Result<Vec<String>>;
 }

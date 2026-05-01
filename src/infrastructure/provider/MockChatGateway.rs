@@ -14,4 +14,13 @@ impl ChatGateway for MockChatGateway {
             content: "AIGateway mock response from Rust".to_string(),
         })
     }
+
+    async fn stream_complete(&self, _req: CompletionRequest) -> anyhow::Result<Vec<String>> {
+        Ok(vec![
+            "AIGateway ".to_string(),
+            "mock ".to_string(),
+            "stream ".to_string(),
+            "response".to_string(),
+        ])
+    }
 }

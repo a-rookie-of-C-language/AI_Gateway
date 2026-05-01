@@ -12,4 +12,8 @@ impl ChatAppService {
     pub async fn complete(&self, req: CompletionRequest) -> anyhow::Result<CompletionResult> {
         self.gateway.complete(req).await
     }
+
+    pub async fn stream_complete(&self, req: CompletionRequest) -> anyhow::Result<Vec<String>> {
+        self.gateway.stream_complete(req).await
+    }
 }

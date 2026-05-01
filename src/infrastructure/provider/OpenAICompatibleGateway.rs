@@ -1,4 +1,5 @@
 use async_trait::async_trait;
+use futures_util::StreamExt;
 use reqwest::Client;
 use serde_json::Value;
 use std::time::Duration;
@@ -86,5 +87,76 @@ impl ChatGateway for OpenAICompatibleGateway {
             model: result_model,
             content,
         })
+    }
+
+    async fn stream_complete(&self, req: CompletionRequest) -> anyhow::Result<Vec<String>> {
+        let model = req
+            .model
+            .clone()
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| self.default_model.clone());
+
+        let messages: Vec<Value> = req
+            .messages
+            .iter()
+            .map(|m| serde_json::json!({ "role": m.role, "content": m.content }))
+            .collect();
+
+        let response = self
+            .client
+            .post(format!("{}/chat/completions", self.base_url))
+            .bearer_auth(&self.api_key)
+            .json(&serde_json::json!({
+                "model": model,
+                "messages": messages,
+                "stream": true
+            }))
+            .send()
+            .await?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let body = response.text().await.unwrap_or_default();
+            anyhow::bail!("provider stream failed: status={}, body={}", status, body);
+        }
+
+        let mut chunks = Vec::new();
+        let mut stream = response.bytes_stream();
+        let mut buf = String::new();
+
+        while let Some(item) = stream.next().await {
+            let bytes = item?;
+            buf.push_str(&String::from_utf8_lossy(&bytes));
+
+            while let Some(idx) = buf.find('\n') {
+                let line = buf[..idx].trim().to_string();
+                buf = buf[idx + 1..].to_string();
+
+                if !line.starts_with("data:") {
+                    continue;
+                }
+                let payload = line.trim_start_matches("data:").trim();
+                if payload == "[DONE]" {
+                    continue;
+                }
+                let Ok(node) = serde_json::from_str::<Value>(payload) else {
+                    continue;
+                };
+                if let Some(delta) = node
+                    .get("choices")
+                    .and_then(Value::as_array)
+                    .and_then(|arr| arr.first())
+                    .and_then(|choice| choice.get("delta"))
+                    .and_then(|delta| delta.get("content"))
+                    .and_then(Value::as_str)
+                {
+                    if !delta.is_empty() {
+                        chunks.push(delta.to_string());
+                    }
+                }
+            }
+        }
+
+        Ok(chunks)
     }
 }
