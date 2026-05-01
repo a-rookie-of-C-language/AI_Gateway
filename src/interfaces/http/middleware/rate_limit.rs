@@ -10,8 +10,6 @@
 use crate::interfaces::http::middleware::MiddlewareState::MiddlewareState;
 use crate::shared::response;
 
-const RATE_LIMIT_WINDOW_MS: u64 = 60_000;
-
 pub async fn rate_limit(
     State(state): State<MiddlewareState>,
     req: Request<Body>,
@@ -26,7 +24,7 @@ pub async fn rate_limit(
     let key = format!("rl:{}", auth_header);
     match state
         .rate_limit_dao
-        .evaluate(&key, state.rate_limit_per_min, RATE_LIMIT_WINDOW_MS)
+        .evaluate(&key, state.rate_limit_per_min, state.rate_limit_window_ms)
         .await
     {
         Ok(decision) => {
