@@ -1,6 +1,6 @@
 ﻿use redis::AsyncCommands;
 
-use crate::domain::ratelimit::RateLimitDao::RateLimitDao;
+use crate::domain::supporting::traffic_governance::RateLimitDao::RateLimitDao;
 
 pub struct RedisRateLimitDao {
     pub client: redis::Client,

@@ -1,6 +1,6 @@
 ﻿use std::sync::Arc;
 
-use crate::domain::chat::ChatGateway::ChatGateway;
+use crate::domain::core::gateway_orchestration::ChatGateway::ChatGateway;
 
 #[derive(Clone)]
 pub struct ChatAppService {

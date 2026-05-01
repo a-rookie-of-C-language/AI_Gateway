@@ -1,10 +1,11 @@
-﻿use crate::domain::chat::CompletionRequest::CompletionRequest;
-use crate::domain::chat::CompletionResult::CompletionResult;
+﻿use crate::domain::core::gateway_orchestration::ChatGateway::ChatGateway;
+use crate::domain::core::gateway_orchestration::CompletionRequest::CompletionRequest;
+use crate::domain::core::gateway_orchestration::CompletionResult::CompletionResult;
 
 use super::ChatAppService::ChatAppService;
 
 impl ChatAppService {
-    pub fn new(gateway: std::sync::Arc<dyn crate::domain::chat::ChatGateway::ChatGateway>) -> Self {
+    pub fn new(gateway: std::sync::Arc<dyn ChatGateway>) -> Self {
         Self { gateway }
     }
 

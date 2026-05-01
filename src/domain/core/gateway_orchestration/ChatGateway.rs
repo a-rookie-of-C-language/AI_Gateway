@@ -1,7 +1,7 @@
 ﻿use async_trait::async_trait;
 
-use crate::domain::chat::CompletionRequest::CompletionRequest;
-use crate::domain::chat::CompletionResult::CompletionResult;
+use crate::domain::core::gateway_orchestration::CompletionRequest::CompletionRequest;
+use crate::domain::core::gateway_orchestration::CompletionResult::CompletionResult;
 
 #[async_trait]
 pub trait ChatGateway: Send + Sync {

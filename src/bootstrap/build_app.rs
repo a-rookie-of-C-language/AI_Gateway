@@ -6,7 +6,7 @@ use axum::middleware;
 use crate::application::chat::ChatAppService::ChatAppService;
 use crate::bootstrap::App::App;
 use crate::config::Config;
-use crate::domain::ratelimit::RateLimitDao::RateLimitDao;
+use crate::domain::supporting::traffic_governance::RateLimitDao::RateLimitDao;
 use crate::infrastructure::dao::ratelimit::RedisRateLimitDao::RedisRateLimitDao;
 use crate::infrastructure::http::AppState::AppState;
 use crate::infrastructure::http::build_router::build_router;

@@ -1,7 +1,7 @@
 ﻿use axum::{extract::State, http::StatusCode, Json};
 use serde_json::json;
 
-use crate::domain::chat::CompletionRequest::CompletionRequest;
+use crate::domain::core::gateway_orchestration::CompletionRequest::CompletionRequest;
 use crate::infrastructure::http::AppState::AppState;
 use crate::shared::response;
 

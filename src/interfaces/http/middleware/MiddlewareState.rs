@@ -1,6 +1,6 @@
 ﻿use std::sync::Arc;
 
-use crate::domain::ratelimit::RateLimitDao::RateLimitDao;
+use crate::domain::supporting::traffic_governance::RateLimitDao::RateLimitDao;
 
 #[derive(Clone)]
 pub struct MiddlewareState {
