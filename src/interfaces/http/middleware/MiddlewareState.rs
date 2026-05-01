@@ -1,0 +1,10 @@
+﻿use std::sync::Arc;
+
+use crate::domain::ratelimit::RateLimitDao::RateLimitDao;
+
+#[derive(Clone)]
+pub struct MiddlewareState {
+    pub master_api_key: String,
+    pub rate_limit_per_min: u64,
+    pub rate_limit_dao: Arc<dyn RateLimitDao>,
+}

@@ -1,4 +1,4 @@
 ﻿#[allow(non_snake_case)]
-pub mod AppState;
+pub mod App;
 #[allow(non_snake_case)]
-pub mod build_router;
+pub mod build_app;

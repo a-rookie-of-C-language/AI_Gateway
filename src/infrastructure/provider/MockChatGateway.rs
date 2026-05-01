@@ -1,6 +1,8 @@
 ﻿use async_trait::async_trait;
 
-use crate::domain::chat::{ChatGateway, CompletionRequest, CompletionResult};
+use crate::domain::chat::ChatGateway::ChatGateway;
+use crate::domain::chat::CompletionRequest::CompletionRequest;
+use crate::domain::chat::CompletionResult::CompletionResult;
 
 pub struct MockChatGateway;
 

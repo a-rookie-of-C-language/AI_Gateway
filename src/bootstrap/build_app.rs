@@ -1,0 +1,49 @@
+﻿use std::sync::Arc;
+
+use anyhow::Result;
+use axum::middleware;
+
+use crate::application::chat::ChatAppService::ChatAppService;
+use crate::bootstrap::App::App;
+use crate::config::Config;
+use crate::domain::ratelimit::RateLimitDao::RateLimitDao;
+use crate::infrastructure::dao::ratelimit::RedisRateLimitDao::RedisRateLimitDao;
+use crate::infrastructure::http::AppState::AppState;
+use crate::infrastructure::http::build_router::build_router;
+use crate::infrastructure::provider::MockChatGateway::MockChatGateway;
+use crate::interfaces::http::middleware::MiddlewareState::MiddlewareState;
+
+pub async fn build_app() -> Result<App> {
+    let cfg = Config::load();
+
+    let provider = Arc::new(MockChatGateway);
+    let chat_service = Arc::new(ChatAppService::new(provider));
+
+    let redis_client = redis::Client::open(cfg.redis_addr.clone())?;
+    let rate_limit_dao: Arc<dyn RateLimitDao> = Arc::new(RedisRateLimitDao::new(redis_client));
+
+    let app_state = AppState { chat_service };
+    let middleware_state = MiddlewareState {
+        master_api_key: cfg.master_api_key,
+        rate_limit_per_min: cfg.rate_limit_per_min,
+        rate_limit_dao,
+    };
+
+    let router = build_router(app_state)
+        .layer(middleware::from_fn(
+            crate::interfaces::http::middleware::request_id::request_id,
+        ))
+        .layer(middleware::from_fn_with_state(
+            middleware_state.clone(),
+            crate::interfaces::http::middleware::rate_limit::rate_limit,
+        ))
+        .layer(middleware::from_fn_with_state(
+            middleware_state,
+            crate::interfaces::http::middleware::auth::auth,
+        ));
+
+    Ok(App {
+        addr: cfg.http_addr,
+        router,
+    })
+}
