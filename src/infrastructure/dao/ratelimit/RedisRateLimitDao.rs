@@ -45,7 +45,12 @@ impl RedisRateLimitDao {
 
 #[async_trait::async_trait]
 impl RateLimitDao for RedisRateLimitDao {
-    async fn evaluate(&self, key: &str, limit: u64, window_ms: u64) -> anyhow::Result<RateLimitDecision> {
+    async fn evaluate(
+        &self,
+        key: &str,
+        limit: u64,
+        window_ms: u64,
+    ) -> anyhow::Result<RateLimitDecision> {
         let mut conn = self.client.get_multiplexed_async_connection().await?;
         let now_ms = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)?

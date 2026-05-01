@@ -43,6 +43,9 @@ pub async fn build_app() -> Result<App> {
     let middleware_state = MiddlewareState {
         master_api_key: cfg.master_api_key,
         rate_limit_per_min: cfg.rate_limit_per_min,
+        rate_limit_tenant_per_min: cfg.rate_limit_tenant_per_min,
+        rate_limit_route_per_min: cfg.rate_limit_route_per_min,
+        rate_limit_model_per_min: cfg.rate_limit_model_per_min,
         rate_limit_window_ms: cfg.rate_limit_window_ms,
         rate_limit_dao,
     };
