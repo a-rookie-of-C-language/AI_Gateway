@@ -51,11 +51,12 @@ pub async fn chat_stream(
     );
 
     let events = match state.chat_service.stream_complete(payload).await {
-        Ok(chunks) => {
-            let mut evs: Vec<Result<Event, Infallible>> = chunks
-                .into_iter()
-                .map(|c| Ok(Event::default().event("delta").data(serde_json::json!({"text": c}).to_string())))
-                .collect();
+        Ok(raw_nodes) => {
+            let mut evs: Vec<Result<Event, Infallible>> = Vec::new();
+            for node in raw_nodes {
+                tracing::info!(request_id = %trace.request_id, raw = %node, "provider raw event");
+                evs.push(Ok(Event::default().event("raw").data(node.to_string())));
+            }
             evs.push(Ok(Event::default().event("done").data("{\"finish_reason\":\"stop\"}")));
             evs
         }

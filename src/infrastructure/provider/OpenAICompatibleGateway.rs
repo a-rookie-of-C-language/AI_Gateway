@@ -1,4 +1,4 @@
-use async_trait::async_trait;
+﻿use async_trait::async_trait;
 use futures_util::StreamExt;
 use reqwest::Client;
 use serde_json::Value;
@@ -89,7 +89,7 @@ impl ChatGateway for OpenAICompatibleGateway {
         })
     }
 
-    async fn stream_complete(&self, req: CompletionRequest) -> anyhow::Result<Vec<String>> {
+    async fn stream_complete(&self, req: CompletionRequest) -> anyhow::Result<Vec<Value>> {
         let model = req
             .model
             .clone()
@@ -120,7 +120,7 @@ impl ChatGateway for OpenAICompatibleGateway {
             anyhow::bail!("provider stream failed: status={}, body={}", status, body);
         }
 
-        let mut chunks = Vec::new();
+        let mut raw_events: Vec<Value> = Vec::new();
         let mut stream = response.bytes_stream();
         let mut buf = String::new();
 
@@ -142,21 +142,10 @@ impl ChatGateway for OpenAICompatibleGateway {
                 let Ok(node) = serde_json::from_str::<Value>(payload) else {
                     continue;
                 };
-                if let Some(delta) = node
-                    .get("choices")
-                    .and_then(Value::as_array)
-                    .and_then(|arr| arr.first())
-                    .and_then(|choice| choice.get("delta"))
-                    .and_then(|delta| delta.get("content"))
-                    .and_then(Value::as_str)
-                {
-                    if !delta.is_empty() {
-                        chunks.push(delta.to_string());
-                    }
-                }
+                raw_events.push(node);
             }
         }
 
-        Ok(chunks)
+        Ok(raw_events)
     }
 }

@@ -1,4 +1,5 @@
 ﻿use async_trait::async_trait;
+use serde_json::json;
 
 use crate::domain::core::gateway_orchestration::ChatGateway::ChatGateway;
 use crate::domain::core::gateway_orchestration::CompletionRequest::CompletionRequest;
@@ -15,12 +16,12 @@ impl ChatGateway for MockChatGateway {
         })
     }
 
-    async fn stream_complete(&self, _req: CompletionRequest) -> anyhow::Result<Vec<String>> {
+    async fn stream_complete(&self, _req: CompletionRequest) -> anyhow::Result<Vec<serde_json::Value>> {
         Ok(vec![
-            "AIGateway ".to_string(),
-            "mock ".to_string(),
-            "stream ".to_string(),
-            "response".to_string(),
+            json!({"type":"delta","text":"AIGateway "}),
+            json!({"type":"delta","text":"mock "}),
+            json!({"type":"delta","text":"stream "}),
+            json!({"type":"delta","text":"response"}),
         ])
     }
 }

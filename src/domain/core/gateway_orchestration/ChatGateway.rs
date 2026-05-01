@@ -1,4 +1,5 @@
 ﻿use async_trait::async_trait;
+use serde_json::Value;
 
 use crate::domain::core::gateway_orchestration::CompletionRequest::CompletionRequest;
 use crate::domain::core::gateway_orchestration::CompletionResult::CompletionResult;
@@ -6,5 +7,5 @@ use crate::domain::core::gateway_orchestration::CompletionResult::CompletionResu
 #[async_trait]
 pub trait ChatGateway: Send + Sync {
     async fn complete(&self, req: CompletionRequest) -> anyhow::Result<CompletionResult>;
-    async fn stream_complete(&self, req: CompletionRequest) -> anyhow::Result<Vec<String>>;
+    async fn stream_complete(&self, req: CompletionRequest) -> anyhow::Result<Vec<Value>>;
 }

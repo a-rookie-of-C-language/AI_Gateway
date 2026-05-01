@@ -1,4 +1,6 @@
-﻿use crate::domain::core::gateway_orchestration::ChatGateway::ChatGateway;
+﻿use serde_json::Value;
+
+use crate::domain::core::gateway_orchestration::ChatGateway::ChatGateway;
 use crate::domain::core::gateway_orchestration::CompletionRequest::CompletionRequest;
 use crate::domain::core::gateway_orchestration::CompletionResult::CompletionResult;
 
@@ -13,7 +15,7 @@ impl ChatAppService {
         self.gateway.complete(req).await
     }
 
-    pub async fn stream_complete(&self, req: CompletionRequest) -> anyhow::Result<Vec<String>> {
+    pub async fn stream_complete(&self, req: CompletionRequest) -> anyhow::Result<Vec<Value>> {
         self.gateway.stream_complete(req).await
     }
 }
