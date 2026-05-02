@@ -35,6 +35,14 @@ impl AppState {
         Ok(true)
     }
 
+    pub async fn release_tokens(&self, tokens: u64) -> anyhow::Result<()> {
+        let today = chrono::Utc::now().format("%Y-%m-%d").to_string();
+        let key = format!("quota:{}", today);
+        let mut conn = self.redis_client.get_multiplexed_async_connection().await?;
+        let _: i64 = conn.decr(&key, tokens).await?;
+        Ok(())
+    }
+
     pub async fn check_redis(&self) -> bool {
         match self.redis_client.get_multiplexed_async_connection().await {
             Ok(mut conn) => {

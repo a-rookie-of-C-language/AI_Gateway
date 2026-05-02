@@ -33,7 +33,7 @@ pub async fn build_app() -> Result<App> {
     let (token_usage_dao, pg_pool): (Option<Arc<dyn TokenUsageDao>>, Option<sqlx::PgPool>) = match &cfg.database_url {
         Some(url) => {
             let pool = sqlx::postgres::PgPoolOptions::new()
-                .max_connections(5)
+                .max_connections(cfg.db_max_connections)
                 .connect(url)
                 .await?;
             sqlx::migrate!("./migrations").run(&pool).await?;

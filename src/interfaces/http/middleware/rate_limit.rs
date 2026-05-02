@@ -87,6 +87,10 @@ pub async fn rate_limit(
                 let (status, body) =
                     response::err(StatusCode::TOO_MANY_REQUESTS, "rate limit exceeded");
                 let mut resp = (status, body).into_response();
+                let retry_after_secs = (decision.reset_after_ms + 999) / 1000;
+                if let Ok(v) = HeaderValue::from_str(&retry_after_secs.to_string()) {
+                    resp.headers_mut().insert("Retry-After", v);
+                }
                 append_rate_limit_headers(
                     &mut resp,
                     decision.limit,

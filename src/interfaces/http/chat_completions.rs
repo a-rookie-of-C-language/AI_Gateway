@@ -12,12 +12,45 @@ use crate::domain::supporting::observability_audit::TraceRecord::TraceRecord;
 use crate::infrastructure::http::AppState::AppState;
 use crate::shared::response;
 
+const MAX_MESSAGES: usize = 128;
+const MAX_MESSAGE_CONTENT_LEN: usize = 128 * 1024;
+const VALID_ROLES: &[&str] = &["system", "user", "assistant", "tool"];
+
+fn validate_request(payload: &CompletionRequest) -> Result<(), (StatusCode, Json<serde_json::Value>)> {
+    if payload.messages.is_empty() {
+        return Err(response::err(StatusCode::BAD_REQUEST, "messages must not be empty"));
+    }
+    if payload.messages.len() > MAX_MESSAGES {
+        return Err(response::err(
+            StatusCode::BAD_REQUEST,
+            &format!("messages count exceeds limit of {}", MAX_MESSAGES),
+        ));
+    }
+    for (i, msg) in payload.messages.iter().enumerate() {
+        if !VALID_ROLES.contains(&msg.role.as_str()) {
+            return Err(response::err(
+                StatusCode::BAD_REQUEST,
+                &format!("invalid role '{}' at message index {}", msg.role, i),
+            ));
+        }
+        if msg.content.len() > MAX_MESSAGE_CONTENT_LEN {
+            return Err(response::err(
+                StatusCode::BAD_REQUEST,
+                &format!("message content exceeds {} bytes at index {}", MAX_MESSAGE_CONTENT_LEN, i),
+            ));
+        }
+    }
+    Ok(())
+}
+
 pub async fn chat_completions(
     State(state): State<AppState>,
     Extension(tenant): Extension<TenantIdentity>,
     headers: HeaderMap,
     Json(payload): Json<CompletionRequest>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    validate_request(&payload)?;
+
     let estimated_tokens: u64 = payload
         .messages
         .iter()
@@ -77,6 +110,9 @@ pub async fn chat_completions(
                     };
                     if let Err(e) = dao.insert(&usage).await {
                         tracing::error!(request_id = %trace.request_id, "failed to persist token usage: {}", e);
+                        if let Err(rollback_err) = state.release_tokens(estimated_tokens).await {
+                            tracing::error!(request_id = %trace.request_id, "quota rollback failed: {}", rollback_err);
+                        }
                     }
                 }
             }
@@ -84,6 +120,9 @@ pub async fn chat_completions(
         }
         Err(err) => {
             tracing::error!(request_id = %trace.request_id, "provider error: {:?}", err);
+            if let Err(e) = state.release_tokens(estimated_tokens).await {
+                tracing::error!(request_id = %trace.request_id, "quota rollback on provider error failed: {}", e);
+            }
             Err(response::err(StatusCode::BAD_GATEWAY, "upstream service error"))
         }
     }

@@ -18,6 +18,7 @@ pub struct Config {
     pub provider_model: String,
     pub provider_timeout_sec: u64,
     pub database_url: Option<String>,
+    pub db_max_connections: u32,
 }
 
 const DEFAULT_MASTER_API_KEY: &str = "dev-key";
@@ -41,6 +42,7 @@ impl Config {
             provider_model: env_or("PROVIDER_MODEL", "gpt-4.1-mini"),
             provider_timeout_sec: env_or("PROVIDER_TIMEOUT_SEC", "60").parse().unwrap_or(60),
             database_url: env::var("DATABASE_URL").ok(),
+            db_max_connections: env_or("DB_MAX_CONNECTIONS", "5").parse().unwrap_or(5),
         };
         cfg.validate();
         cfg

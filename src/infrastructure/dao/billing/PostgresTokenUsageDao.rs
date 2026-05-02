@@ -167,6 +167,14 @@ impl TokenUsageDao for PostgresTokenUsageDao {
         let rows = q.fetch_all(&self.pool).await?;
         Ok(rows.into_iter().map(|r| r.into()).collect())
     }
+
+    async fn purge_before(&self, before: chrono::DateTime<chrono::Utc>) -> anyhow::Result<u64> {
+        let result = sqlx::query("DELETE FROM token_usage_records WHERE created_at < $1")
+            .bind(before)
+            .execute(&self.pool)
+            .await?;
+        Ok(result.rows_affected())
+    }
 }
 
 #[derive(sqlx::FromRow)]
