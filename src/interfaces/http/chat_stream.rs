@@ -69,25 +69,35 @@ pub async fn chat_stream(
     let upstream = streaming.stream;
     let usage_rx = streaming.usage_rx;
 
-    if let Some(ref dao) = state.token_usage_dao {
-        let dao = dao.clone();
+    let has_dao = state.token_usage_dao.is_some();
+    if has_dao {
+        let dao = state.token_usage_dao.clone();
         let tenant_id = tenant.tenant_id.clone();
         let app_id = tenant.app_id.clone();
         let req_id = trace.request_id.clone();
+        let app_state = state.clone();
         tokio::spawn(async move {
             match usage_rx.await {
                 Ok(Some(mut usage)) => {
                     if usage.request_id.is_empty() {
-                        usage.request_id = req_id;
+                        usage.request_id = req_id.clone();
                     }
                     if usage.tenant_id.is_empty() {
-                        usage.tenant_id = tenant_id;
+                        usage.tenant_id = tenant_id.clone();
                     }
                     if usage.app_id.is_empty() {
-                        usage.app_id = app_id;
+                        usage.app_id = app_id.clone();
                     }
-                    if let Err(e) = dao.insert(&usage).await {
-                        tracing::error!("failed to persist streaming token usage: {}", e);
+                    let actual = usage.total_tokens as u64;
+                    if actual > estimated_tokens {
+                        if let Err(e) = app_state.try_consume_tokens(actual - estimated_tokens).await {
+                            tracing::warn!(request_id = %req_id, "streaming quota top-up failed: {}", e);
+                        }
+                    }
+                    if let Some(ref dao) = dao {
+                        if let Err(e) = dao.insert(&usage).await {
+                            tracing::error!("failed to persist streaming token usage: {}", e);
+                        }
                     }
                 }
                 Ok(None) => {}
@@ -96,6 +106,8 @@ pub async fn chat_stream(
                 }
             }
         });
+    } else {
+        let _ = usage_rx;
     }
 
     let trace_id = trace.request_id.clone();

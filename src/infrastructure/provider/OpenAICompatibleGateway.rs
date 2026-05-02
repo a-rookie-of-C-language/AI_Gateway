@@ -138,23 +138,28 @@ impl ChatGateway for OpenAICompatibleGateway {
 
         tokio::spawn(async move {
             use futures_util::StreamExt;
-            let mut buf = String::new();
+            let mut buf: Vec<u8> = Vec::new();
             let mut last_usage: Option<TokenUsage> = None;
 
             while let Some(item) = upstream.next().await {
                 match item {
                     Ok(bytes) => {
-                        buf.push_str(&String::from_utf8_lossy(&bytes));
-                        while let Some(idx) = buf.find('\n') {
-                            let line = buf[..idx].trim().to_string();
-                            buf = buf[idx + 1..].to_string();
+                        buf.extend_from_slice(&bytes);
+                        while let Some(idx) = buf.iter().position(|&b| b == b'\n') {
+                            let line_bytes = buf[..idx].to_vec();
+                            buf.drain(..idx + 1);
+
+                            let line = match std::str::from_utf8(&line_bytes) {
+                                Ok(s) => s.trim().to_string(),
+                                Err(_) => continue,
+                            };
 
                             if !line.starts_with("data:") {
                                 continue;
                             }
                             let payload = line.trim_start_matches("data:").trim();
                             if payload == "[DONE]" {
-                                continue;
+                                break;
                             }
                             match serde_json::from_str::<Value>(payload) {
                                 Ok(node) => {
@@ -181,10 +186,8 @@ impl ChatGateway for OpenAICompatibleGateway {
                                     }
                                 }
                                 Err(e) => {
-                                    if tx.send(Err(anyhow::anyhow!(e))).await.is_err() {
-                                        let _ = usage_tx.send(last_usage);
-                                        return;
-                                    }
+                                    tracing::warn!("failed to parse SSE payload: {}, raw: {}", e, payload);
+                                    continue;
                                 }
                             }
                         }

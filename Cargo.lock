@@ -38,6 +38,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sqlx",
+ "subtle",
  "tokio",
  "tokio-stream",
  "tracing",

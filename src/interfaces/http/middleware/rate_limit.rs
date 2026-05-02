@@ -96,10 +96,10 @@ pub async fn rate_limit(
                 Ok(resp)
             }
         }
-        _ => Err(response::err(
-            StatusCode::SERVICE_UNAVAILABLE,
-            "rate limiter unavailable",
-        )),
+        (Err(e), _) | (_, Err(e)) => {
+            tracing::warn!("rate limiter unavailable, fail-open: {}", e);
+            Ok(next.run(req).await)
+        }
     }
 }
 

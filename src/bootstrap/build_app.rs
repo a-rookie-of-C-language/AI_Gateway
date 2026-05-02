@@ -67,16 +67,16 @@ pub async fn build_app() -> Result<App> {
     };
 
     let router = build_router(app_state)
-        .layer(middleware::from_fn(
-            crate::interfaces::http::middleware::request_id::request_id,
-        ))
         .layer(middleware::from_fn_with_state(
             middleware_state.clone(),
-            crate::interfaces::http::middleware::rate_limit::rate_limit,
+            crate::interfaces::http::middleware::auth::auth,
         ))
         .layer(middleware::from_fn_with_state(
             middleware_state,
-            crate::interfaces::http::middleware::auth::auth,
+            crate::interfaces::http::middleware::rate_limit::rate_limit,
+        ))
+        .layer(middleware::from_fn(
+            crate::interfaces::http::middleware::request_id::request_id,
         ));
 
     Ok(App {

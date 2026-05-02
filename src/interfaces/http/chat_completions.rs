@@ -55,6 +55,14 @@ pub async fn chat_completions(
 
     match state.chat_service.complete(payload).await {
         Ok(data) => {
+            if let Some(tt) = data.total_tokens {
+                let actual = tt as u64;
+                if actual > estimated_tokens {
+                    if let Err(e) = state.try_consume_tokens(actual - estimated_tokens).await {
+                        tracing::warn!(request_id = %trace.request_id, "quota top-up failed: {}", e);
+                    }
+                }
+            }
             if let (Some(pt), Some(ct), Some(tt)) = (data.prompt_tokens, data.completion_tokens, data.total_tokens) {
                 if let Some(ref dao) = state.token_usage_dao {
                     let usage = TokenUsage {
