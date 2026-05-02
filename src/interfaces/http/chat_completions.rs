@@ -21,7 +21,7 @@ pub async fn chat_completions(
     let estimated_tokens: u64 = payload
         .messages
         .iter()
-        .map(|m| m.content.len() as u64)
+        .map(|m| (m.content.chars().count() as u64 + 2) / 3)
         .sum();
 
     match state.try_consume_tokens(estimated_tokens).await {
@@ -82,6 +82,9 @@ pub async fn chat_completions(
             }
             Ok(response::ok(json!(data)))
         }
-        Err(err) => Err(response::err(StatusCode::BAD_GATEWAY, &err.to_string())),
+        Err(err) => {
+            tracing::error!(request_id = %trace.request_id, "provider error: {:?}", err);
+            Err(response::err(StatusCode::BAD_GATEWAY, "upstream service error"))
+        }
     }
 }

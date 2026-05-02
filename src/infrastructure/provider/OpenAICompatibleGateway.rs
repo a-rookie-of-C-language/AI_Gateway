@@ -90,6 +90,13 @@ impl ChatGateway for OpenAICompatibleGateway {
         let prompt_tokens = usage.and_then(|u| u.get("prompt_tokens")).and_then(Value::as_i64);
         let completion_tokens = usage.and_then(|u| u.get("completion_tokens")).and_then(Value::as_i64);
         let total_tokens = usage.and_then(|u| u.get("total_tokens")).and_then(Value::as_i64);
+        let finish_reason = body
+            .get("choices")
+            .and_then(Value::as_array)
+            .and_then(|arr| arr.first())
+            .and_then(|choice| choice.get("finish_reason"))
+            .and_then(Value::as_str)
+            .map(|s| s.to_string());
 
         Ok(CompletionResult {
             model: result_model,
@@ -97,6 +104,7 @@ impl ChatGateway for OpenAICompatibleGateway {
             prompt_tokens,
             completion_tokens,
             total_tokens,
+            finish_reason,
         })
     }
 

@@ -12,6 +12,7 @@ pub struct AppState {
     pub quota_policy: QuotaPolicy,
     pub redis_client: redis::Client,
     pub token_usage_dao: Option<Arc<dyn TokenUsageDao>>,
+    pub pg_pool: Option<sqlx::PgPool>,
 }
 
 impl AppState {
@@ -32,5 +33,22 @@ impl AppState {
         }
 
         Ok(true)
+    }
+
+    pub async fn check_redis(&self) -> bool {
+        match self.redis_client.get_multiplexed_async_connection().await {
+            Ok(mut conn) => {
+                let _: Result<String, _> = redis::cmd("PING").query_async(&mut conn).await;
+                true
+            }
+            Err(_) => false,
+        }
+    }
+
+    pub async fn check_postgres(&self) -> Option<bool> {
+        match &self.pg_pool {
+            Some(pool) => Some(sqlx::query("SELECT 1").execute(pool).await.is_ok()),
+            None => None,
+        }
     }
 }

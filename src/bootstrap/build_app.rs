@@ -30,7 +30,7 @@ pub async fn build_app() -> Result<App> {
     let redis_client = redis::Client::open(cfg.redis_addr.clone())?;
     let rate_limit_dao: Arc<dyn RateLimitDao> = Arc::new(RedisRateLimitDao::new(redis_client.clone()));
 
-    let token_usage_dao: Option<Arc<dyn TokenUsageDao>> = match &cfg.database_url {
+    let (token_usage_dao, pg_pool): (Option<Arc<dyn TokenUsageDao>>, Option<sqlx::PgPool>) = match &cfg.database_url {
         Some(url) => {
             let pool = sqlx::postgres::PgPoolOptions::new()
                 .max_connections(5)
@@ -38,11 +38,12 @@ pub async fn build_app() -> Result<App> {
                 .await?;
             sqlx::migrate!("./migrations").run(&pool).await?;
             tracing::info!("PostgreSQL connected, migrations applied");
-            Some(Arc::new(PostgresTokenUsageDao::new(pool)))
+            let pool_clone = pool.clone();
+            (Some(Arc::new(PostgresTokenUsageDao::new(pool)) as Arc<dyn TokenUsageDao>), Some(pool_clone))
         }
         None => {
             tracing::info!("DATABASE_URL not set, token usage persistence disabled");
-            None
+            (None, None)
         }
     };
 
@@ -54,6 +55,7 @@ pub async fn build_app() -> Result<App> {
         },
         redis_client,
         token_usage_dao,
+        pg_pool,
     };
 
     let middleware_state = MiddlewareState {

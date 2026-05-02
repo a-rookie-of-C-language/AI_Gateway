@@ -1,4 +1,5 @@
 use std::convert::Infallible;
+use std::time::Duration;
 
 use axum::{
     extract::{Extension, State},
@@ -23,7 +24,7 @@ pub async fn chat_stream(
     let estimated_tokens: u64 = payload
         .messages
         .iter()
-        .map(|m| m.content.len() as u64)
+        .map(|m| (m.content.chars().count() as u64 + 2) / 3)
         .sum();
 
     match state.try_consume_tokens(estimated_tokens).await {
@@ -58,8 +59,9 @@ pub async fn chat_stream(
     let streaming = match state.chat_service.stream_complete(payload).await {
         Ok(s) => s,
         Err(err) => {
+            tracing::error!(request_id = %trace.request_id, "provider stream error: {:?}", err);
             let evs = stream::iter(vec![
-                Ok(Event::default().event("error").data(serde_json::json!({"message": err.to_string()}).to_string())),
+                Ok(Event::default().event("error").data(serde_json::json!({"message": "upstream service error"}).to_string())),
                 Ok(Event::default().event("done").data("{\"finish_reason\":\"error\"}")),
             ]);
             return Ok(Sse::new(Box::pin(evs)));
@@ -77,33 +79,39 @@ pub async fn chat_stream(
         let req_id = trace.request_id.clone();
         let app_state = state.clone();
         tokio::spawn(async move {
-            match usage_rx.await {
-                Ok(Some(mut usage)) => {
-                    if usage.request_id.is_empty() {
-                        usage.request_id = req_id.clone();
-                    }
-                    if usage.tenant_id.is_empty() {
-                        usage.tenant_id = tenant_id.clone();
-                    }
-                    if usage.app_id.is_empty() {
-                        usage.app_id = app_id.clone();
-                    }
-                    let actual = usage.total_tokens as u64;
-                    if actual > estimated_tokens {
-                        if let Err(e) = app_state.try_consume_tokens(actual - estimated_tokens).await {
-                            tracing::warn!(request_id = %req_id, "streaming quota top-up failed: {}", e);
+            let result = tokio::time::timeout(Duration::from_secs(10), async {
+                match usage_rx.await {
+                    Ok(Some(mut usage)) => {
+                        if usage.request_id.is_empty() {
+                            usage.request_id = req_id.clone();
+                        }
+                        if usage.tenant_id.is_empty() {
+                            usage.tenant_id = tenant_id.clone();
+                        }
+                        if usage.app_id.is_empty() {
+                            usage.app_id = app_id.clone();
+                        }
+                        let actual = usage.total_tokens as u64;
+                        if actual > estimated_tokens {
+                            if let Err(e) = app_state.try_consume_tokens(actual - estimated_tokens).await {
+                                tracing::warn!(request_id = %req_id, "streaming quota top-up failed: {}", e);
+                            }
+                        }
+                        if let Some(ref dao) = dao {
+                            if let Err(e) = dao.insert(&usage).await {
+                                tracing::error!("failed to persist streaming token usage: {}", e);
+                            }
                         }
                     }
-                    if let Some(ref dao) = dao {
-                        if let Err(e) = dao.insert(&usage).await {
-                            tracing::error!("failed to persist streaming token usage: {}", e);
-                        }
+                    Ok(None) => {}
+                    Err(_) => {
+                        tracing::error!("usage oneshot channel dropped");
                     }
                 }
-                Ok(None) => {}
-                Err(_) => {
-                    tracing::error!("usage oneshot channel dropped");
-                }
+            }).await;
+
+            if result.is_err() {
+                tracing::warn!(request_id = %req_id, "streaming usage persistence timed out");
             }
         });
     } else {
@@ -114,7 +122,7 @@ pub async fn chat_stream(
     let out = upstream.map(move |item| -> Result<Event, Infallible> {
         match item {
             Ok(node) => {
-                tracing::info!(request_id = %trace_id, raw = %node, "provider raw event");
+                tracing::debug!(request_id = %trace_id, raw = %node, "provider raw event");
                 Ok(Event::default().event("raw").data(node.to_string()))
             }
             Err(err) => Ok(Event::default().event("error").data(

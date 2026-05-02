@@ -54,6 +54,13 @@ impl Config {
                 self.app_env, DEFAULT_MASTER_API_KEY
             );
         }
+        if self.app_env != "dev" && self.provider_api_key.is_empty() {
+            panic!(
+                "FATAL: APP_ENV is '{}' but PROVIDER_API_KEY is empty. \
+                 Set a valid PROVIDER_API_KEY before starting in non-dev environments.",
+                self.app_env
+            );
+        }
     }
 }
 

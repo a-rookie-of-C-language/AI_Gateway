@@ -19,6 +19,7 @@ impl ChatGateway for MockChatGateway {
             prompt_tokens: None,
             completion_tokens: None,
             total_tokens: None,
+            finish_reason: Some("stop".to_string()),
         })
     }
 

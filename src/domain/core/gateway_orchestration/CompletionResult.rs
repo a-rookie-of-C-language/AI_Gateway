@@ -7,4 +7,5 @@ pub struct CompletionResult {
     pub prompt_tokens: Option<i64>,
     pub completion_tokens: Option<i64>,
     pub total_tokens: Option<i64>,
+    pub finish_reason: Option<String>,
 }

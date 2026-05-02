@@ -5,7 +5,7 @@
 python环境使用venv,优先使用项目的.venv环境
 每次改代码后,必须先执行mvn -q -DskipTests spotless:check等命令检查代码格式是否符合规范
 ```bash
-d:\python\python.exe" -m venv .venv
+d:\python\python.exe -m venv .venv
 ```
 then activate the venv
 ```bash
