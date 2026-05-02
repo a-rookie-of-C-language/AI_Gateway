@@ -1,9 +1,7 @@
-﻿use futures_util::stream::BoxStream;
-use serde_json::Value;
-
-use crate::domain::core::gateway_orchestration::ChatGateway::ChatGateway;
+﻿use crate::domain::core::gateway_orchestration::ChatGateway::ChatGateway;
 use crate::domain::core::gateway_orchestration::CompletionRequest::CompletionRequest;
 use crate::domain::core::gateway_orchestration::CompletionResult::CompletionResult;
+use crate::domain::core::quota_billing::StreamingCompletion::StreamingCompletion;
 
 use super::ChatAppService::ChatAppService;
 
@@ -19,7 +17,7 @@ impl ChatAppService {
     pub async fn stream_complete(
         &self,
         req: CompletionRequest,
-    ) -> anyhow::Result<BoxStream<'static, anyhow::Result<Value>>> {
+    ) -> anyhow::Result<StreamingCompletion> {
         self.gateway.stream_complete(req).await
     }
 }

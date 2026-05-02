@@ -1,4 +1,4 @@
-﻿use std::sync::{
+use std::sync::{
     atomic::AtomicU64,
     Arc,
 };
@@ -10,7 +10,9 @@ use crate::application::chat::ChatAppService::ChatAppService;
 use crate::bootstrap::App::App;
 use crate::config::Config;
 use crate::domain::core::quota_billing::QuotaPolicy::QuotaPolicy;
+use crate::domain::core::quota_billing::TokenUsageDao::TokenUsageDao;
 use crate::domain::supporting::traffic_governance::RateLimitDao::RateLimitDao;
+use crate::infrastructure::dao::billing::PostgresTokenUsageDao::PostgresTokenUsageDao;
 use crate::infrastructure::dao::ratelimit::RedisRateLimitDao::RedisRateLimitDao;
 use crate::infrastructure::http::AppState::AppState;
 use crate::infrastructure::http::build_router::build_router;
@@ -31,6 +33,22 @@ pub async fn build_app() -> Result<App> {
     let redis_client = redis::Client::open(cfg.redis_addr.clone())?;
     let rate_limit_dao: Arc<dyn RateLimitDao> = Arc::new(RedisRateLimitDao::new(redis_client));
 
+    let token_usage_dao: Option<Arc<dyn TokenUsageDao>> = match &cfg.database_url {
+        Some(url) => {
+            let pool = sqlx::postgres::PgPoolOptions::new()
+                .max_connections(5)
+                .connect(url)
+                .await?;
+            sqlx::migrate!("./migrations").run(&pool).await?;
+            tracing::info!("PostgreSQL connected, migrations applied");
+            Some(Arc::new(PostgresTokenUsageDao::new(pool)))
+        }
+        None => {
+            tracing::info!("DATABASE_URL not set, token usage persistence disabled");
+            None
+        }
+    };
+
     let app_state = AppState {
         chat_service,
         quota_policy: QuotaPolicy {
@@ -38,6 +56,7 @@ pub async fn build_app() -> Result<App> {
             max_tokens_per_day: 1_000_000,
         },
         used_tokens_today: Arc::new(AtomicU64::new(0)),
+        token_usage_dao,
     };
 
     let middleware_state = MiddlewareState {

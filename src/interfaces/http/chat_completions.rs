@@ -1,4 +1,4 @@
-﻿use axum::{
+use axum::{
     extract::{Extension, State},
     http::{HeaderMap, StatusCode},
     Json,
@@ -6,6 +6,7 @@
 use serde_json::json;
 
 use crate::domain::core::gateway_orchestration::CompletionRequest::CompletionRequest;
+use crate::domain::core::quota_billing::TokenUsage::TokenUsage;
 use crate::domain::core::tenant_access_control::TenantIdentity::TenantIdentity;
 use crate::domain::supporting::observability_audit::TraceRecord::TraceRecord;
 use crate::infrastructure::http::AppState::AppState;
@@ -35,7 +36,7 @@ pub async fn chat_completions(
 
     let trace = TraceRecord {
         request_id,
-        provider: "mock".to_string(),
+        provider: "openai-compatible".to_string(),
     };
 
     tracing::info!(
@@ -48,7 +49,26 @@ pub async fn chat_completions(
     );
 
     match state.chat_service.complete(payload).await {
-        Ok(data) => Ok(response::ok(json!(data))),
+        Ok(data) => {
+            if let (Some(pt), Some(ct), Some(tt)) = (data.prompt_tokens, data.completion_tokens, data.total_tokens) {
+                if let Some(ref dao) = state.token_usage_dao {
+                    let usage = TokenUsage {
+                        request_id: trace.request_id.clone(),
+                        tenant_id: tenant.tenant_id.clone(),
+                        app_id: tenant.app_id.clone(),
+                        model: data.model.clone(),
+                        prompt_tokens: pt,
+                        completion_tokens: ct,
+                        total_tokens: tt,
+                        created_at: chrono::Utc::now(),
+                    };
+                    if let Err(e) = dao.insert(&usage).await {
+                        tracing::error!(request_id = %trace.request_id, "failed to persist token usage: {}", e);
+                    }
+                }
+            }
+            Ok(response::ok(json!(data)))
+        }
         Err(err) => Err(response::err(StatusCode::BAD_GATEWAY, &err.to_string())),
     }
 }

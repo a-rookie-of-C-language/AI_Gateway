@@ -15,6 +15,7 @@ pub struct Config {
     pub provider_api_key: String,
     pub provider_model: String,
     pub provider_timeout_sec: u64,
+    pub database_url: Option<String>,
 }
 
 impl Config {
@@ -33,6 +34,7 @@ impl Config {
             provider_api_key: env_or("PROVIDER_API_KEY", ""),
             provider_model: env_or("PROVIDER_MODEL", "gpt-4.1-mini"),
             provider_timeout_sec: env_or("PROVIDER_TIMEOUT_SEC", "60").parse().unwrap_or(60),
+            database_url: env::var("DATABASE_URL").ok(),
         }
     }
 }

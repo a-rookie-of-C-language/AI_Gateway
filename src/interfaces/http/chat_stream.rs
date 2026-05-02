@@ -1,4 +1,4 @@
-﻿use std::convert::Infallible;
+use std::convert::Infallible;
 
 use axum::{
     extract::{Extension, State},
@@ -50,31 +50,63 @@ pub async fn chat_stream(
         "chat stream request"
     );
 
-    let merged: futures_util::stream::BoxStream<'static, Result<Event, Infallible>> = match state.chat_service.stream_complete(payload).await {
-        Ok(upstream) => {
-            let trace_id = trace.request_id.clone();
-            let out = upstream.map(move |item| -> Result<Event, Infallible> {
-                match item {
-                    Ok(node) => {
-                        tracing::info!(request_id = %trace_id, raw = %node, "provider raw event");
-                        Ok(Event::default().event("raw").data(node.to_string()))
-                    }
-                    Err(err) => Ok(Event::default().event("error").data(
-                        serde_json::json!({"message": err.to_string()}).to_string(),
-                    )),
-                }
-            });
-            let done = stream::iter(vec![Ok(Event::default().event("done").data("{\"finish_reason\":\"stop\"}"))]);
-            Box::pin(out.chain(done))
-        }
+    let streaming = match state.chat_service.stream_complete(payload).await {
+        Ok(s) => s,
         Err(err) => {
             let evs = stream::iter(vec![
                 Ok(Event::default().event("error").data(serde_json::json!({"message": err.to_string()}).to_string())),
                 Ok(Event::default().event("done").data("{\"finish_reason\":\"error\"}")),
             ]);
-            Box::pin(evs)
+            return Ok(Sse::new(Box::pin(evs)));
         }
     };
+
+    let upstream = streaming.stream;
+    let usage_rx = streaming.usage_rx;
+
+    if let Some(ref dao) = state.token_usage_dao {
+        let dao = dao.clone();
+        let tenant_id = tenant.tenant_id.clone();
+        let app_id = tenant.app_id.clone();
+        let req_id = trace.request_id.clone();
+        tokio::spawn(async move {
+            match usage_rx.await {
+                Ok(Some(mut usage)) => {
+                    if usage.request_id.is_empty() {
+                        usage.request_id = req_id;
+                    }
+                    if usage.tenant_id.is_empty() {
+                        usage.tenant_id = tenant_id;
+                    }
+                    if usage.app_id.is_empty() {
+                        usage.app_id = app_id;
+                    }
+                    if let Err(e) = dao.insert(&usage).await {
+                        tracing::error!("failed to persist streaming token usage: {}", e);
+                    }
+                }
+                Ok(None) => {}
+                Err(_) => {
+                    tracing::error!("usage oneshot channel dropped");
+                }
+            }
+        });
+    }
+
+    let trace_id = trace.request_id.clone();
+    let out = upstream.map(move |item| -> Result<Event, Infallible> {
+        match item {
+            Ok(node) => {
+                tracing::info!(request_id = %trace_id, raw = %node, "provider raw event");
+                Ok(Event::default().event("raw").data(node.to_string()))
+            }
+            Err(err) => Ok(Event::default().event("error").data(
+                serde_json::json!({"message": err.to_string()}).to_string(),
+            )),
+        }
+    });
+    let done = stream::iter(vec![Ok(Event::default().event("done").data("{\"finish_reason\":\"stop\"}"))]);
+    let merged: futures_util::stream::BoxStream<'static, Result<Event, Infallible>> = Box::pin(out.chain(done));
 
     Ok(Sse::new(merged))
 }

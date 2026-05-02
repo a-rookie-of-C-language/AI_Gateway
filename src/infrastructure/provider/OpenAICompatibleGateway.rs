@@ -1,14 +1,15 @@
 ﻿use async_trait::async_trait;
-use futures_util::stream::BoxStream;
 use reqwest::Client;
 use serde_json::Value;
 use std::time::Duration;
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, oneshot};
 use tokio_stream::wrappers::ReceiverStream;
 
 use crate::domain::core::gateway_orchestration::ChatGateway::ChatGateway;
 use crate::domain::core::gateway_orchestration::CompletionRequest::CompletionRequest;
 use crate::domain::core::gateway_orchestration::CompletionResult::CompletionResult;
+use crate::domain::core::quota_billing::StreamingCompletion::StreamingCompletion;
+use crate::domain::core::quota_billing::TokenUsage::TokenUsage;
 
 pub struct OpenAICompatibleGateway {
     pub client: Client,
@@ -85,13 +86,21 @@ impl ChatGateway for OpenAICompatibleGateway {
             .unwrap_or("")
             .to_string();
 
+        let usage = body.get("usage");
+        let prompt_tokens = usage.and_then(|u| u.get("prompt_tokens")).and_then(Value::as_i64);
+        let completion_tokens = usage.and_then(|u| u.get("completion_tokens")).and_then(Value::as_i64);
+        let total_tokens = usage.and_then(|u| u.get("total_tokens")).and_then(Value::as_i64);
+
         Ok(CompletionResult {
             model: result_model,
             content,
+            prompt_tokens,
+            completion_tokens,
+            total_tokens,
         })
     }
 
-    async fn stream_complete(&self, req: CompletionRequest) -> anyhow::Result<BoxStream<'static, anyhow::Result<Value>>> {
+    async fn stream_complete(&self, req: CompletionRequest) -> anyhow::Result<StreamingCompletion> {
         let model = req
             .model
             .clone()
@@ -111,7 +120,8 @@ impl ChatGateway for OpenAICompatibleGateway {
             .json(&serde_json::json!({
                 "model": model,
                 "messages": messages,
-                "stream": true
+                "stream": true,
+                "stream_options": {"include_usage": true}
             }))
             .send()
             .await?;
@@ -124,10 +134,13 @@ impl ChatGateway for OpenAICompatibleGateway {
 
         let mut upstream = response.bytes_stream();
         let (tx, rx) = mpsc::channel::<anyhow::Result<Value>>(128);
+        let (usage_tx, usage_rx) = oneshot::channel::<Option<TokenUsage>>();
 
         tokio::spawn(async move {
             use futures_util::StreamExt;
             let mut buf = String::new();
+            let mut last_usage: Option<TokenUsage> = None;
+
             while let Some(item) = upstream.next().await {
                 match item {
                     Ok(bytes) => {
@@ -145,12 +158,31 @@ impl ChatGateway for OpenAICompatibleGateway {
                             }
                             match serde_json::from_str::<Value>(payload) {
                                 Ok(node) => {
+                                    if let Some(usage_obj) = node.get("usage") {
+                                        let prompt_tokens = usage_obj.get("prompt_tokens").and_then(Value::as_i64).unwrap_or(0);
+                                        let completion_tokens = usage_obj.get("completion_tokens").and_then(Value::as_i64).unwrap_or(0);
+                                        let total_tokens = usage_obj.get("total_tokens").and_then(Value::as_i64).unwrap_or(0);
+                                        let stream_model = node.get("model").and_then(Value::as_str).unwrap_or("").to_string();
+                                        last_usage = Some(TokenUsage {
+                                            request_id: String::new(),
+                                            tenant_id: String::new(),
+                                            app_id: String::new(),
+                                            model: stream_model,
+                                            prompt_tokens,
+                                            completion_tokens,
+                                            total_tokens,
+                                            created_at: chrono::Utc::now(),
+                                        });
+                                        continue;
+                                    }
                                     if tx.send(Ok(node)).await.is_err() {
+                                        let _ = usage_tx.send(last_usage);
                                         return;
                                     }
                                 }
                                 Err(e) => {
                                     if tx.send(Err(anyhow::anyhow!(e))).await.is_err() {
+                                        let _ = usage_tx.send(last_usage);
                                         return;
                                     }
                                 }
@@ -159,12 +191,17 @@ impl ChatGateway for OpenAICompatibleGateway {
                     }
                     Err(e) => {
                         let _ = tx.send(Err(anyhow::anyhow!(e))).await;
+                        let _ = usage_tx.send(last_usage);
                         return;
                     }
                 }
             }
+            let _ = usage_tx.send(last_usage);
         });
 
-        Ok(Box::pin(ReceiverStream::new(rx)))
+        Ok(StreamingCompletion {
+            stream: Box::pin(ReceiverStream::new(rx)),
+            usage_rx,
+        })
     }
 }
