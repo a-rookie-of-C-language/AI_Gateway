@@ -26,8 +26,13 @@ pub async fn chat_stream(
         .map(|m| m.content.len() as u64)
         .sum();
 
-    if !state.try_consume_tokens(estimated_tokens) {
-        return Err(response::err(StatusCode::PAYMENT_REQUIRED, "quota exceeded"));
+    match state.try_consume_tokens(estimated_tokens).await {
+        Ok(true) => {}
+        Ok(false) => return Err(response::err(StatusCode::PAYMENT_REQUIRED, "quota exceeded")),
+        Err(e) => {
+            tracing::error!("quota check failed: {}", e);
+            return Err(response::err(StatusCode::INTERNAL_SERVER_ERROR, "quota service unavailable"));
+        }
     }
 
     let request_id = headers

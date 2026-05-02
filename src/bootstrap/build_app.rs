@@ -1,7 +1,4 @@
-use std::sync::{
-    atomic::AtomicU64,
-    Arc,
-};
+use std::sync::Arc;
 
 use anyhow::Result;
 use axum::middleware;
@@ -31,7 +28,7 @@ pub async fn build_app() -> Result<App> {
     let chat_service = Arc::new(ChatAppService::new(provider));
 
     let redis_client = redis::Client::open(cfg.redis_addr.clone())?;
-    let rate_limit_dao: Arc<dyn RateLimitDao> = Arc::new(RedisRateLimitDao::new(redis_client));
+    let rate_limit_dao: Arc<dyn RateLimitDao> = Arc::new(RedisRateLimitDao::new(redis_client.clone()));
 
     let token_usage_dao: Option<Arc<dyn TokenUsageDao>> = match &cfg.database_url {
         Some(url) => {
@@ -53,9 +50,9 @@ pub async fn build_app() -> Result<App> {
         chat_service,
         quota_policy: QuotaPolicy {
             plan_code: "default".to_string(),
-            max_tokens_per_day: 1_000_000,
+            max_tokens_per_day: cfg.max_tokens_per_day,
         },
-        used_tokens_today: Arc::new(AtomicU64::new(0)),
+        redis_client,
         token_usage_dao,
     };
 

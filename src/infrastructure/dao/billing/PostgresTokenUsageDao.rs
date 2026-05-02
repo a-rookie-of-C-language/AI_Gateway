@@ -15,6 +15,40 @@ impl PostgresTokenUsageDao {
     pub fn new(pool: PgPool) -> Self {
         Self { pool }
     }
+
+    fn build_where_clause(query: &UsageQuery) -> (String, usize) {
+        let mut conditions: Vec<String> = Vec::new();
+        let mut idx = 1usize;
+
+        if query.tenant_id.is_some() {
+            conditions.push(format!("tenant_id = ${}", idx));
+            idx += 1;
+        }
+        if query.app_id.is_some() {
+            conditions.push(format!("app_id = ${}", idx));
+            idx += 1;
+        }
+        if query.model.is_some() {
+            conditions.push(format!("model = ${}", idx));
+            idx += 1;
+        }
+        if query.from.is_some() {
+            conditions.push(format!("created_at >= ${}", idx));
+            idx += 1;
+        }
+        if query.to.is_some() {
+            conditions.push(format!("created_at <= ${}", idx));
+            idx += 1;
+        }
+
+        let where_clause = if conditions.is_empty() {
+            String::new()
+        } else {
+            format!(" WHERE {}", conditions.join(" AND "))
+        };
+
+        (where_clause, idx)
+    }
 }
 
 #[async_trait]
@@ -73,28 +107,8 @@ impl TokenUsageDao for PostgresTokenUsageDao {
             select_cols.push("NULL AS period_start".to_string());
         }
 
-        let mut sql = format!("SELECT {} FROM token_usage_records", select_cols.join(", "));
-        let mut conditions: Vec<String> = Vec::new();
-
-        if query.tenant_id.is_some() {
-            conditions.push(format!("tenant_id = ${}", conditions.len() + 1));
-        }
-        if query.app_id.is_some() {
-            conditions.push(format!("app_id = ${}", conditions.len() + 1));
-        }
-        if query.model.is_some() {
-            conditions.push(format!("model = ${}", conditions.len() + 1));
-        }
-        if query.from.is_some() {
-            conditions.push(format!("created_at >= ${}", conditions.len() + 1));
-        }
-        if query.to.is_some() {
-            conditions.push(format!("created_at <= ${}", conditions.len() + 1));
-        }
-
-        if !conditions.is_empty() {
-            sql.push_str(&format!(" WHERE {}", conditions.join(" AND ")));
-        }
+        let (where_clause, mut param_idx) = Self::build_where_clause(query);
+        let mut sql = format!("SELECT {} FROM token_usage_records{}", select_cols.join(", "), where_clause);
 
         if !group_cols.is_empty() {
             sql.push_str(&format!(" GROUP BY {}", group_cols.join(", ")));
@@ -102,88 +116,53 @@ impl TokenUsageDao for PostgresTokenUsageDao {
 
         sql.push_str(" ORDER BY total_tokens DESC");
 
-        if let Some(limit) = query.limit {
-            sql.push_str(&format!(" LIMIT {}", limit));
+        if query.limit.is_some() {
+            sql.push_str(&format!(" LIMIT ${}", param_idx));
+            param_idx += 1;
         }
-        if let Some(offset) = query.offset {
-            sql.push_str(&format!(" OFFSET {}", offset));
+        if query.offset.is_some() {
+            sql.push_str(&format!(" OFFSET ${}", param_idx));
         }
 
         let mut q = sqlx::query_as::<_, UsageSummaryRow>(&sql);
-
-        if let Some(ref v) = query.tenant_id {
-            q = q.bind(v);
-        }
-        if let Some(ref v) = query.app_id {
-            q = q.bind(v);
-        }
-        if let Some(ref v) = query.model {
-            q = q.bind(v);
-        }
-        if let Some(v) = query.from {
-            q = q.bind(v);
-        }
-        if let Some(v) = query.to {
-            q = q.bind(v);
-        }
+        if let Some(ref v) = query.tenant_id { q = q.bind(v); }
+        if let Some(ref v) = query.app_id { q = q.bind(v); }
+        if let Some(ref v) = query.model { q = q.bind(v); }
+        if let Some(v) = query.from { q = q.bind(v); }
+        if let Some(v) = query.to { q = q.bind(v); }
+        if let Some(limit) = query.limit { q = q.bind(limit); }
+        if let Some(offset) = query.offset { q = q.bind(offset); }
 
         let rows = q.fetch_all(&self.pool).await?;
         Ok(rows.into_iter().map(|r| r.into()).collect())
     }
 
     async fn list(&self, query: &UsageQuery) -> anyhow::Result<Vec<TokenUsage>> {
-        let mut sql = String::from(
+        let (where_clause, mut param_idx) = Self::build_where_clause(query);
+        let mut sql = format!(
             "SELECT request_id, tenant_id, app_id, model, prompt_tokens, completion_tokens, total_tokens, created_at
-             FROM token_usage_records",
+             FROM token_usage_records{}",
+            where_clause
         );
-        let mut conditions: Vec<String> = Vec::new();
-
-        if query.tenant_id.is_some() {
-            conditions.push(format!("tenant_id = ${}", conditions.len() + 1));
-        }
-        if query.app_id.is_some() {
-            conditions.push(format!("app_id = ${}", conditions.len() + 1));
-        }
-        if query.model.is_some() {
-            conditions.push(format!("model = ${}", conditions.len() + 1));
-        }
-        if query.from.is_some() {
-            conditions.push(format!("created_at >= ${}", conditions.len() + 1));
-        }
-        if query.to.is_some() {
-            conditions.push(format!("created_at <= ${}", conditions.len() + 1));
-        }
-
-        if !conditions.is_empty() {
-            sql.push_str(&format!(" WHERE {}", conditions.join(" AND ")));
-        }
 
         sql.push_str(" ORDER BY created_at DESC");
 
-        if let Some(limit) = query.limit {
-            sql.push_str(&format!(" LIMIT {}", limit));
+        if query.limit.is_some() {
+            sql.push_str(&format!(" LIMIT ${}", param_idx));
+            param_idx += 1;
         }
-        if let Some(offset) = query.offset {
-            sql.push_str(&format!(" OFFSET {}", offset));
+        if query.offset.is_some() {
+            sql.push_str(&format!(" OFFSET ${}", param_idx));
         }
 
         let mut q = sqlx::query_as::<_, TokenUsageRow>(&sql);
-
-        if let Some(ref v) = query.tenant_id {
-            q = q.bind(v);
-        }
-        if let Some(ref v) = query.app_id {
-            q = q.bind(v);
-        }
-        if let Some(ref v) = query.model {
-            q = q.bind(v);
-        }
-        if let Some(v) = query.from {
-            q = q.bind(v);
-        }
-        if let Some(v) = query.to {
-            q = q.bind(v);
-        }
+        if let Some(ref v) = query.tenant_id { q = q.bind(v); }
+        if let Some(ref v) = query.app_id { q = q.bind(v); }
+        if let Some(ref v) = query.model { q = q.bind(v); }
+        if let Some(v) = query.from { q = q.bind(v); }
+        if let Some(v) = query.to { q = q.bind(v); }
+        if let Some(limit) = query.limit { q = q.bind(limit); }
+        if let Some(offset) = query.offset { q = q.bind(offset); }
 
         let rows = q.fetch_all(&self.pool).await?;
         Ok(rows.into_iter().map(|r| r.into()).collect())
