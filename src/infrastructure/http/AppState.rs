@@ -88,4 +88,37 @@ impl AppState {
             None => None,
         }
     }
+
+    pub async fn check_provider(&self) -> bool {
+        use crate::domain::core::gateway_orchestration::ChatGateway::ChatGateway;
+        use crate::domain::core::gateway_orchestration::CompletionRequest::CompletionRequest;
+        use crate::domain::core::gateway_orchestration::Message::Message;
+
+        let req = CompletionRequest {
+            model: Some("health-check".to_string()),
+            messages: vec![Message {
+                role: "user".to_string(),
+                content: "ping".to_string(),
+            }],
+            temperature: None,
+            max_tokens: Some(1),
+            top_p: None,
+            frequency_penalty: None,
+            presence_penalty: None,
+            tools: None,
+            response_format: None,
+        };
+
+        match tokio::time::timeout(std::time::Duration::from_secs(5), self.chat_service.complete(req)).await {
+            Ok(Ok(_)) => true,
+            Ok(Err(e)) => {
+                tracing::warn!("provider health check failed: {}", e);
+                false
+            }
+            Err(_) => {
+                tracing::warn!("provider health check timed out");
+                false
+            }
+        }
+    }
 }

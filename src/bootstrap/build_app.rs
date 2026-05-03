@@ -101,6 +101,7 @@ pub async fn build_app() -> Result<App> {
         rate_limit_route_per_min: cfg.rate_limit_route_per_min,
         rate_limit_model_per_min: cfg.rate_limit_model_per_min,
         rate_limit_window_ms: cfg.rate_limit_window_ms,
+        rate_limit_fail_open: cfg.rate_limit_fail_open,
         rate_limit_dao,
         tenant_dao,
     };

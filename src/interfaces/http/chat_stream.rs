@@ -13,51 +13,50 @@ use crate::domain::core::gateway_orchestration::CompletionRequest::CompletionReq
 use crate::domain::core::tenant_access_control::TenantIdentity::TenantIdentity;
 use crate::domain::supporting::observability_audit::TraceRecord::TraceRecord;
 use crate::infrastructure::http::AppState::AppState;
+use crate::shared::json_extractor::UnifiedJson;
 use crate::shared::response;
+use crate::shared::validator::validate_request;
 
-const MAX_MESSAGES: usize = 128;
-const MAX_MESSAGE_CONTENT_LEN: usize = 128 * 1024;
-const VALID_ROLES: &[&str] = &["system", "user", "assistant", "tool"];
+const MAX_ROLLBACK_RETRIES: u32 = 3;
 
-fn validate_request(payload: &CompletionRequest) -> Result<(), (StatusCode, Json<serde_json::Value>)> {
-    if payload.messages.is_empty() {
-        return Err(response::err(StatusCode::BAD_REQUEST, "messages must not be empty"));
-    }
-    if payload.messages.len() > MAX_MESSAGES {
-        return Err(response::err(
-            StatusCode::BAD_REQUEST,
-            &format!("messages count exceeds limit of {}", MAX_MESSAGES),
-        ));
-    }
-    for (i, msg) in payload.messages.iter().enumerate() {
-        if !VALID_ROLES.contains(&msg.role.as_str()) {
-            return Err(response::err(
-                StatusCode::BAD_REQUEST,
-                &format!("invalid role '{}' at message index {}", msg.role, i),
-            ));
-        }
-        if msg.content.len() > MAX_MESSAGE_CONTENT_LEN {
-            return Err(response::err(
-                StatusCode::BAD_REQUEST,
-                &format!("message content exceeds {} bytes at index {}", MAX_MESSAGE_CONTENT_LEN, i),
-            ));
+async fn retry_release_tokens(
+    state: &AppState,
+    tokens: u64,
+    tenant_id: &str,
+    app_id: &str,
+    request_id: &str,
+) {
+    for attempt in 0..MAX_ROLLBACK_RETRIES {
+        match state.release_tokens(tokens, tenant_id, app_id).await {
+            Ok(_) => return,
+            Err(e) => {
+                tracing::warn!(
+                    request_id = %request_id,
+                    attempt,
+                    error = %e,
+                    "quota rollback failed, retrying"
+                );
+                if attempt < MAX_ROLLBACK_RETRIES - 1 {
+                    tokio::time::sleep(Duration::from_millis(100 * 2u64.pow(attempt))).await;
+                }
+            }
         }
     }
-    Ok(())
+    tracing::error!(request_id = %request_id, "quota rollback failed after all retries");
 }
 
 pub async fn chat_stream(
     State(state): State<AppState>,
     Extension(tenant): Extension<TenantIdentity>,
     headers: HeaderMap,
-    Json(payload): Json<CompletionRequest>,
+    UnifiedJson(payload): UnifiedJson<CompletionRequest>,
 ) -> Result<Sse<futures_util::stream::BoxStream<'static, Result<Event, Infallible>>>, (StatusCode, Json<serde_json::Value>)> {
     validate_request(&payload)?;
 
     let estimated_tokens: u64 = payload
         .messages
         .iter()
-        .map(|m| (m.content.chars().count() as u64 + 2) / 3)
+        .map(|m| crate::shared::token_estimator::estimate_tokens(&m.content) + 4)
         .sum();
 
     match state.try_consume_tokens(estimated_tokens, &tenant.tenant_id, &tenant.app_id).await {
@@ -94,9 +93,7 @@ pub async fn chat_stream(
         Ok(s) => s,
         Err(err) => {
             tracing::error!(request_id = %trace.request_id, "provider stream error: {:?}", err);
-            if let Err(e) = state.release_tokens(estimated_tokens, &tenant.tenant_id, &tenant.app_id).await {
-                tracing::error!(request_id = %trace.request_id, "quota rollback on stream error failed: {}", e);
-            }
+            retry_release_tokens(&state, estimated_tokens, &tenant.tenant_id, &tenant.app_id, &trace.request_id).await;
             let evs = stream::iter(vec![
                 Ok(Event::default().event("error").data(serde_json::json!({"message": "upstream service error"}).to_string())),
                 Ok(Event::default().event("done").data("{\"finish_reason\":\"error\"}")),
@@ -134,16 +131,12 @@ pub async fn chat_stream(
                                 tracing::warn!(request_id = %req_id, "streaming quota top-up failed: {}", e);
                             }
                         } else if actual < estimated_tokens {
-                            if let Err(e) = app_state.release_tokens(estimated_tokens - actual, &tenant_id, &app_id).await {
-                                tracing::warn!(request_id = %req_id, "streaming quota rollback failed: {}", e);
-                            }
+                            retry_release_tokens(&app_state, estimated_tokens - actual, &tenant_id, &app_id, &req_id).await;
                         }
                         if let Some(ref dao) = dao {
                             if let Err(e) = dao.insert(&usage).await {
                                 tracing::error!("failed to persist streaming token usage: {}", e);
-                                if let Err(rollback_err) = app_state.release_tokens(estimated_tokens, &tenant_id, &app_id).await {
-                                    tracing::error!(request_id = %req_id, "streaming quota rollback failed: {}", rollback_err);
-                                }
+                                retry_release_tokens(&app_state, estimated_tokens, &tenant_id, &app_id, &req_id).await;
                             }
                         }
                     }
