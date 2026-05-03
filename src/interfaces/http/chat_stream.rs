@@ -60,7 +60,7 @@ pub async fn chat_stream(
         .map(|m| (m.content.chars().count() as u64 + 2) / 3)
         .sum();
 
-    match state.try_consume_tokens(estimated_tokens).await {
+    match state.try_consume_tokens(estimated_tokens, &tenant.tenant_id, &tenant.app_id).await {
         Ok(true) => {}
         Ok(false) => return Err(response::err(StatusCode::PAYMENT_REQUIRED, "quota exceeded")),
         Err(e) => {
@@ -78,6 +78,7 @@ pub async fn chat_stream(
     let trace = TraceRecord {
         request_id,
         provider: "openai-compatible".to_string(),
+        span_id: None,
     };
 
     tracing::info!(
@@ -93,7 +94,7 @@ pub async fn chat_stream(
         Ok(s) => s,
         Err(err) => {
             tracing::error!(request_id = %trace.request_id, "provider stream error: {:?}", err);
-            if let Err(e) = state.release_tokens(estimated_tokens).await {
+            if let Err(e) = state.release_tokens(estimated_tokens, &tenant.tenant_id, &tenant.app_id).await {
                 tracing::error!(request_id = %trace.request_id, "quota rollback on stream error failed: {}", e);
             }
             let evs = stream::iter(vec![
@@ -129,18 +130,18 @@ pub async fn chat_stream(
                         }
                         let actual = usage.total_tokens as u64;
                         if actual > estimated_tokens {
-                            if let Err(e) = app_state.try_consume_tokens(actual - estimated_tokens).await {
+                            if let Err(e) = app_state.try_consume_tokens(actual - estimated_tokens, &tenant_id, &app_id).await {
                                 tracing::warn!(request_id = %req_id, "streaming quota top-up failed: {}", e);
                             }
                         } else if actual < estimated_tokens {
-                            if let Err(e) = app_state.release_tokens(estimated_tokens - actual).await {
+                            if let Err(e) = app_state.release_tokens(estimated_tokens - actual, &tenant_id, &app_id).await {
                                 tracing::warn!(request_id = %req_id, "streaming quota rollback failed: {}", e);
                             }
                         }
                         if let Some(ref dao) = dao {
                             if let Err(e) = dao.insert(&usage).await {
                                 tracing::error!("failed to persist streaming token usage: {}", e);
-                                if let Err(rollback_err) = app_state.release_tokens(estimated_tokens).await {
+                                if let Err(rollback_err) = app_state.release_tokens(estimated_tokens, &tenant_id, &app_id).await {
                                     tracing::error!(request_id = %req_id, "streaming quota rollback failed: {}", rollback_err);
                                 }
                             }

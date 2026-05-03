@@ -1,6 +1,8 @@
 #[allow(non_snake_case)]
 pub mod QuotaPolicy;
 #[allow(non_snake_case)]
+pub mod QuotaPolicyDao;
+#[allow(non_snake_case)]
 pub mod TokenUsage;
 #[allow(non_snake_case)]
 pub mod TokenUsageDao;

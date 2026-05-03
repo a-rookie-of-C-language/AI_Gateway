@@ -43,6 +43,142 @@ fn validate_request(payload: &CompletionRequest) -> Result<(), (StatusCode, Json
     Ok(())
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::domain::core::gateway_orchestration::Message::Message;
+
+    fn make_request(messages: Vec<Message>) -> CompletionRequest {
+        CompletionRequest {
+            model: Some("test".to_string()),
+            messages,
+            temperature: None,
+            max_tokens: None,
+            top_p: None,
+            frequency_penalty: None,
+            presence_penalty: None,
+            tools: None,
+            response_format: None,
+        }
+    }
+
+    #[test]
+    fn test_valid_request() {
+        let req = make_request(vec![Message {
+            role: "user".to_string(),
+            content: "hello".to_string(),
+        }]);
+        assert!(validate_request(&req).is_ok());
+    }
+
+    #[test]
+    fn test_empty_messages() {
+        let req = make_request(vec![]);
+        let result = validate_request(&req);
+        assert!(result.is_err());
+        let (status, _) = result.unwrap_err();
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+    }
+
+    #[test]
+    fn test_too_many_messages() {
+        let messages: Vec<Message> = (0..129)
+            .map(|_| Message {
+                role: "user".to_string(),
+                content: "test".to_string(),
+            })
+            .collect();
+        let req = make_request(messages);
+        let result = validate_request(&req);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_exactly_max_messages() {
+        let messages: Vec<Message> = (0..128)
+            .map(|_| Message {
+                role: "user".to_string(),
+                content: "test".to_string(),
+            })
+            .collect();
+        let req = make_request(messages);
+        assert!(validate_request(&req).is_ok());
+    }
+
+    #[test]
+    fn test_invalid_role() {
+        let req = make_request(vec![Message {
+            role: "admin".to_string(),
+            content: "hello".to_string(),
+        }]);
+        let result = validate_request(&req);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_valid_roles() {
+        for role in &["system", "user", "assistant", "tool"] {
+            let req = make_request(vec![Message {
+                role: role.to_string(),
+                content: "hello".to_string(),
+            }]);
+            assert!(validate_request(&req).is_ok(), "role {} should be valid", role);
+        }
+    }
+
+    #[test]
+    fn test_content_too_large() {
+        let large_content = "x".repeat(128 * 1024 + 1);
+        let req = make_request(vec![Message {
+            role: "user".to_string(),
+            content: large_content,
+        }]);
+        let result = validate_request(&req);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_content_exactly_max() {
+        let max_content = "x".repeat(128 * 1024);
+        let req = make_request(vec![Message {
+            role: "user".to_string(),
+            content: max_content,
+        }]);
+        assert!(validate_request(&req).is_ok());
+    }
+
+    #[test]
+    fn test_multiple_messages_valid() {
+        let req = make_request(vec![
+            Message {
+                role: "system".to_string(),
+                content: "You are a helpful assistant".to_string(),
+            },
+            Message {
+                role: "user".to_string(),
+                content: "Hello".to_string(),
+            },
+        ]);
+        assert!(validate_request(&req).is_ok());
+    }
+
+    #[test]
+    fn test_second_message_invalid_role() {
+        let req = make_request(vec![
+            Message {
+                role: "user".to_string(),
+                content: "Hello".to_string(),
+            },
+            Message {
+                role: "invalid".to_string(),
+                content: "World".to_string(),
+            },
+        ]);
+        let result = validate_request(&req);
+        assert!(result.is_err());
+    }
+}
+
 pub async fn chat_completions(
     State(state): State<AppState>,
     Extension(tenant): Extension<TenantIdentity>,
@@ -57,7 +193,7 @@ pub async fn chat_completions(
         .map(|m| (m.content.chars().count() as u64 + 2) / 3)
         .sum();
 
-    match state.try_consume_tokens(estimated_tokens).await {
+    match state.try_consume_tokens(estimated_tokens, &tenant.tenant_id, &tenant.app_id).await {
         Ok(true) => {}
         Ok(false) => return Err(response::err(StatusCode::PAYMENT_REQUIRED, "quota exceeded")),
         Err(e) => {
@@ -75,6 +211,7 @@ pub async fn chat_completions(
     let trace = TraceRecord {
         request_id,
         provider: "openai-compatible".to_string(),
+        span_id: None,
     };
 
     tracing::info!(
@@ -91,11 +228,11 @@ pub async fn chat_completions(
             if let Some(tt) = data.total_tokens {
                 let actual = tt as u64;
                 if actual > estimated_tokens {
-                    if let Err(e) = state.try_consume_tokens(actual - estimated_tokens).await {
+                    if let Err(e) = state.try_consume_tokens(actual - estimated_tokens, &tenant.tenant_id, &tenant.app_id).await {
                         tracing::warn!(request_id = %trace.request_id, "quota top-up failed: {}", e);
                     }
                 } else if actual < estimated_tokens {
-                    if let Err(e) = state.release_tokens(estimated_tokens - actual).await {
+                    if let Err(e) = state.release_tokens(estimated_tokens - actual, &tenant.tenant_id, &tenant.app_id).await {
                         tracing::warn!(request_id = %trace.request_id, "quota rollback failed: {}", e);
                     }
                 }
@@ -114,7 +251,7 @@ pub async fn chat_completions(
                     };
                     if let Err(e) = dao.insert(&usage).await {
                         tracing::error!(request_id = %trace.request_id, "failed to persist token usage: {}", e);
-                        if let Err(rollback_err) = state.release_tokens(estimated_tokens).await {
+                        if let Err(rollback_err) = state.release_tokens(estimated_tokens, &tenant.tenant_id, &tenant.app_id).await {
                             tracing::error!(request_id = %trace.request_id, "quota rollback failed: {}", rollback_err);
                         }
                     }
@@ -124,7 +261,7 @@ pub async fn chat_completions(
         }
         Err(err) => {
             tracing::error!(request_id = %trace.request_id, "provider error: {:?}", err);
-            if let Err(e) = state.release_tokens(estimated_tokens).await {
+            if let Err(e) = state.release_tokens(estimated_tokens, &tenant.tenant_id, &tenant.app_id).await {
                 tracing::error!(request_id = %trace.request_id, "quota rollback on provider error failed: {}", e);
             }
             Err(response::err(StatusCode::BAD_GATEWAY, "upstream service error"))

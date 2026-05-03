@@ -98,3 +98,123 @@ impl Config {
 fn env_or(key: &str, default: &str) -> String {
     env::var(key).unwrap_or_else(|_| default.to_string())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn default_config() -> Config {
+        Config {
+            app_name: "test".to_string(),
+            app_env: "dev".to_string(),
+            http_addr: "0.0.0.0:8080".to_string(),
+            master_api_key: "dev-key".to_string(),
+            redis_addr: "redis://127.0.0.1:6379".to_string(),
+            rate_limit_per_min: 120,
+            rate_limit_tenant_per_min: 240,
+            rate_limit_route_per_min: 120,
+            rate_limit_model_per_min: 120,
+            rate_limit_window_ms: 60000,
+            max_tokens_per_day: 1000000,
+            provider_base_url: "https://api.openai.com/v1".to_string(),
+            provider_api_key: "sk-test".to_string(),
+            provider_model: "gpt-4".to_string(),
+            provider_timeout_sec: 60,
+            database_url: None,
+            db_max_connections: 5,
+        }
+    }
+
+    #[test]
+    fn test_dev_env_with_default_key() {
+        let cfg = default_config();
+        assert!(cfg.validate().is_ok());
+    }
+
+    #[test]
+    fn test_prod_env_with_default_key() {
+        let mut cfg = default_config();
+        cfg.app_env = "production".to_string();
+        cfg.master_api_key = "dev-key".to_string();
+        let result = cfg.validate();
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            ConfigError::MissingMasterApiKey { env } => assert_eq!(env, "production"),
+            _ => panic!("expected MissingMasterApiKey"),
+        }
+    }
+
+    #[test]
+    fn test_prod_env_with_custom_key() {
+        let mut cfg = default_config();
+        cfg.app_env = "production".to_string();
+        cfg.master_api_key = "secure-key-123".to_string();
+        assert!(cfg.validate().is_ok());
+    }
+
+    #[test]
+    fn test_prod_env_without_provider_key() {
+        let mut cfg = default_config();
+        cfg.app_env = "production".to_string();
+        cfg.master_api_key = "secure-key".to_string();
+        cfg.provider_api_key = "".to_string();
+        let result = cfg.validate();
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            ConfigError::MissingProviderApiKey { env } => assert_eq!(env, "production"),
+            _ => panic!("expected MissingProviderApiKey"),
+        }
+    }
+
+    #[test]
+    fn test_dev_env_without_provider_key() {
+        let mut cfg = default_config();
+        cfg.provider_api_key = "".to_string();
+        assert!(cfg.validate().is_ok());
+    }
+
+    #[test]
+    fn test_staging_env_requires_custom_key() {
+        let mut cfg = default_config();
+        cfg.app_env = "staging".to_string();
+        cfg.master_api_key = "dev-key".to_string();
+        assert!(cfg.validate().is_err());
+    }
+
+    #[test]
+    fn test_config_error_display() {
+        let err = ConfigError::MissingMasterApiKey { env: "prod".to_string() };
+        assert!(format!("{}", err).contains("prod"));
+        assert!(format!("{}", err).contains("MASTER_API_KEY"));
+    }
+
+    #[test]
+    fn test_config_error_display_provider() {
+        let err = ConfigError::MissingProviderApiKey { env: "staging".to_string() };
+        assert!(format!("{}", err).contains("staging"));
+        assert!(format!("{}", err).contains("PROVIDER_API_KEY"));
+    }
+
+    #[test]
+    fn test_config_error_is_error() {
+        let err: Box<dyn std::error::Error> = Box::new(ConfigError::MissingMasterApiKey {
+            env: "prod".to_string(),
+        });
+        assert!(err.source().is_none());
+    }
+
+    #[test]
+    fn test_dev_skip_all_validation() {
+        let mut cfg = default_config();
+        cfg.app_env = "dev".to_string();
+        cfg.master_api_key = "dev-key".to_string();
+        cfg.provider_api_key = "".to_string();
+        assert!(cfg.validate().is_ok());
+    }
+
+    #[test]
+    fn test_env_or_default() {
+        let val = env_or("NON_EXISTENT_KEY_12345", "default_value");
+        assert_eq!(val, "default_value");
+    }
+}

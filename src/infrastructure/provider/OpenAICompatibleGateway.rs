@@ -52,15 +52,25 @@ impl ChatGateway for OpenAICompatibleGateway {
             .map(|m| serde_json::json!({ "role": m.role, "content": m.content }))
             .collect();
 
+        let mut body = serde_json::json!({
+            "model": model,
+            "messages": messages,
+            "stream": false
+        });
+
+        if let Some(v) = req.temperature { body["temperature"] = serde_json::json!(v); }
+        if let Some(v) = req.max_tokens { body["max_tokens"] = serde_json::json!(v); }
+        if let Some(v) = req.top_p { body["top_p"] = serde_json::json!(v); }
+        if let Some(v) = req.frequency_penalty { body["frequency_penalty"] = serde_json::json!(v); }
+        if let Some(v) = req.presence_penalty { body["presence_penalty"] = serde_json::json!(v); }
+        if let Some(ref v) = req.tools { body["tools"] = v.clone(); }
+        if let Some(ref v) = req.response_format { body["response_format"] = v.clone(); }
+
         let response = self
             .client
             .post(format!("{}/chat/completions", self.base_url))
             .bearer_auth(&self.api_key)
-            .json(&serde_json::json!({
-                "model": model,
-                "messages": messages,
-                "stream": false
-            }))
+            .json(&body)
             .send()
             .await?;
 
@@ -121,16 +131,26 @@ impl ChatGateway for OpenAICompatibleGateway {
             .map(|m| serde_json::json!({ "role": m.role, "content": m.content }))
             .collect();
 
+        let mut body = serde_json::json!({
+            "model": model,
+            "messages": messages,
+            "stream": true,
+            "stream_options": {"include_usage": true}
+        });
+
+        if let Some(v) = req.temperature { body["temperature"] = serde_json::json!(v); }
+        if let Some(v) = req.max_tokens { body["max_tokens"] = serde_json::json!(v); }
+        if let Some(v) = req.top_p { body["top_p"] = serde_json::json!(v); }
+        if let Some(v) = req.frequency_penalty { body["frequency_penalty"] = serde_json::json!(v); }
+        if let Some(v) = req.presence_penalty { body["presence_penalty"] = serde_json::json!(v); }
+        if let Some(ref v) = req.tools { body["tools"] = v.clone(); }
+        if let Some(ref v) = req.response_format { body["response_format"] = v.clone(); }
+
         let response = self
             .client
             .post(format!("{}/chat/completions", self.base_url))
             .bearer_auth(&self.api_key)
-            .json(&serde_json::json!({
-                "model": model,
-                "messages": messages,
-                "stream": true,
-                "stream_options": {"include_usage": true}
-            }))
+            .json(&body)
             .send()
             .await?;
 

@@ -2,24 +2,42 @@ use std::sync::Arc;
 
 use redis::AsyncCommands;
 
-use crate::application::chat::ChatAppService::ChatAppService;
+use crate::application::chat::ChatService::ChatService;
 use crate::domain::core::quota_billing::QuotaPolicy::QuotaPolicy;
+use crate::domain::core::quota_billing::QuotaPolicyDao::QuotaPolicyDao;
 use crate::domain::core::quota_billing::TokenUsageDao::TokenUsageDao;
+use crate::domain::supporting::observability_audit::AuditLogDao::AuditLogDao;
 
 #[derive(Clone)]
 pub struct AppState {
-    pub chat_service: Arc<ChatAppService>,
-    pub quota_policy: QuotaPolicy,
+    pub chat_service: Arc<dyn ChatService>,
+    pub default_quota_policy: QuotaPolicy,
+    pub quota_policy_dao: Option<Arc<dyn QuotaPolicyDao>>,
     pub redis_client: redis::Client,
     pub token_usage_dao: Option<Arc<dyn TokenUsageDao>>,
+    pub audit_log_dao: Option<Arc<dyn AuditLogDao>>,
     pub pg_pool: Option<sqlx::PgPool>,
 }
 
 impl AppState {
-    pub async fn try_consume_tokens(&self, tokens: u64) -> anyhow::Result<bool> {
+    pub async fn get_quota_policy(&self, tenant_id: &str, app_id: &str) -> QuotaPolicy {
+        if let Some(ref dao) = self.quota_policy_dao {
+            match dao.get_policy(tenant_id, app_id).await {
+                Ok(Some(policy)) => return policy,
+                Ok(None) => {}
+                Err(e) => {
+                    tracing::warn!("failed to get tenant quota policy: {}, using default", e);
+                }
+            }
+        }
+        self.default_quota_policy.clone()
+    }
+
+    pub async fn try_consume_tokens(&self, tokens: u64, tenant_id: &str, app_id: &str) -> anyhow::Result<bool> {
+        let policy = self.get_quota_policy(tenant_id, app_id).await;
         let today = chrono::Utc::now().format("%Y-%m-%d").to_string();
-        let key = format!("quota:{}", today);
-        let max = self.quota_policy.max_tokens_per_day;
+        let key = format!("quota:{}:{}:{}", tenant_id, app_id, today);
+        let max = policy.max_tokens_per_day;
 
         let mut conn = self.redis_client.get_multiplexed_async_connection().await?;
 
@@ -46,9 +64,9 @@ impl AppState {
         Ok(result == 1)
     }
 
-    pub async fn release_tokens(&self, tokens: u64) -> anyhow::Result<()> {
+    pub async fn release_tokens(&self, tokens: u64, tenant_id: &str, app_id: &str) -> anyhow::Result<()> {
         let today = chrono::Utc::now().format("%Y-%m-%d").to_string();
-        let key = format!("quota:{}", today);
+        let key = format!("quota:{}:{}:{}", tenant_id, app_id, today);
         let mut conn = self.redis_client.get_multiplexed_async_connection().await?;
         let _: i64 = conn.decr(&key, tokens).await?;
         Ok(())
