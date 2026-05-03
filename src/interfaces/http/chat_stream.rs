@@ -132,6 +132,10 @@ pub async fn chat_stream(
                             if let Err(e) = app_state.try_consume_tokens(actual - estimated_tokens).await {
                                 tracing::warn!(request_id = %req_id, "streaming quota top-up failed: {}", e);
                             }
+                        } else if actual < estimated_tokens {
+                            if let Err(e) = app_state.release_tokens(estimated_tokens - actual).await {
+                                tracing::warn!(request_id = %req_id, "streaming quota rollback failed: {}", e);
+                            }
                         }
                         if let Some(ref dao) = dao {
                             if let Err(e) = dao.insert(&usage).await {

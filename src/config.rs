@@ -1,4 +1,36 @@
 use std::env;
+use std::fmt;
+
+#[derive(Debug)]
+pub enum ConfigError {
+    MissingMasterApiKey { env: String },
+    MissingProviderApiKey { env: String },
+}
+
+impl fmt::Display for ConfigError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            ConfigError::MissingMasterApiKey { env } => {
+                write!(
+                    f,
+                    "APP_ENV is '{}' but MASTER_API_KEY is still the default. \
+                     Set a secure MASTER_API_KEY before starting in non-dev environments.",
+                    env
+                )
+            }
+            ConfigError::MissingProviderApiKey { env } => {
+                write!(
+                    f,
+                    "APP_ENV is '{}' but PROVIDER_API_KEY is empty. \
+                     Set a valid PROVIDER_API_KEY before starting in non-dev environments.",
+                    env
+                )
+            }
+        }
+    }
+}
+
+impl std::error::Error for ConfigError {}
 
 #[derive(Clone)]
 pub struct Config {
@@ -24,7 +56,7 @@ pub struct Config {
 const DEFAULT_MASTER_API_KEY: &str = "dev-key";
 
 impl Config {
-    pub fn load() -> Self {
+    pub fn load() -> anyhow::Result<Self> {
         let cfg = Self {
             app_name: env_or("APP_NAME", "aigateway"),
             app_env: env_or("APP_ENV", "dev"),
@@ -44,25 +76,22 @@ impl Config {
             database_url: env::var("DATABASE_URL").ok(),
             db_max_connections: env_or("DB_MAX_CONNECTIONS", "5").parse().unwrap_or(5),
         };
-        cfg.validate();
-        cfg
+        cfg.validate()?;
+        Ok(cfg)
     }
 
-    fn validate(&self) {
+    fn validate(&self) -> Result<(), ConfigError> {
         if self.app_env != "dev" && self.master_api_key == DEFAULT_MASTER_API_KEY {
-            panic!(
-                "FATAL: APP_ENV is '{}' but MASTER_API_KEY is still the default '{}'. \
-                 Set a secure MASTER_API_KEY before starting in non-dev environments.",
-                self.app_env, DEFAULT_MASTER_API_KEY
-            );
+            return Err(ConfigError::MissingMasterApiKey {
+                env: self.app_env.clone(),
+            });
         }
         if self.app_env != "dev" && self.provider_api_key.is_empty() {
-            panic!(
-                "FATAL: APP_ENV is '{}' but PROVIDER_API_KEY is empty. \
-                 Set a valid PROVIDER_API_KEY before starting in non-dev environments.",
-                self.app_env
-            );
+            return Err(ConfigError::MissingProviderApiKey {
+                env: self.app_env.clone(),
+            });
         }
+        Ok(())
     }
 }
 

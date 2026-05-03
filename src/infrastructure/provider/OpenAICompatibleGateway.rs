@@ -144,66 +144,96 @@ impl ChatGateway for OpenAICompatibleGateway {
         let (tx, rx) = mpsc::channel::<anyhow::Result<Value>>(128);
         let (usage_tx, usage_rx) = oneshot::channel::<Option<TokenUsage>>();
 
+        let chunk_timeout = Duration::from_secs(30);
+        let max_consecutive_timeouts = 3;
+
         tokio::spawn(async move {
             use futures_util::StreamExt;
             let mut buf: Vec<u8> = Vec::new();
             let mut last_usage: Option<TokenUsage> = None;
+            let mut consecutive_timeouts = 0u32;
 
-            while let Some(item) = upstream.next().await {
-                match item {
-                    Ok(bytes) => {
-                        buf.extend_from_slice(&bytes);
-                        while let Some(idx) = buf.iter().position(|&b| b == b'\n') {
-                            let line_bytes = buf[..idx].to_vec();
-                            buf.drain(..idx + 1);
+            loop {
+                match tokio::time::timeout(chunk_timeout, upstream.next()).await {
+                    Ok(Some(item)) => {
+                        consecutive_timeouts = 0;
+                        match item {
+                            Ok(bytes) => {
+                                buf.extend_from_slice(&bytes);
+                                while let Some(idx) = buf.iter().position(|&b| b == b'\n') {
+                                    let line_bytes = buf[..idx].to_vec();
+                                    buf.drain(..idx + 1);
 
-                            let line = match std::str::from_utf8(&line_bytes) {
-                                Ok(s) => s.trim().to_string(),
-                                Err(_) => continue,
-                            };
+                                    let line = match std::str::from_utf8(&line_bytes) {
+                                        Ok(s) => s.trim().to_string(),
+                                        Err(_) => continue,
+                                    };
 
-                            if !line.starts_with("data:") {
-                                continue;
-                            }
-                            let payload = line.trim_start_matches("data:").trim();
-                            if payload == "[DONE]" {
-                                break;
-                            }
-                            match serde_json::from_str::<Value>(payload) {
-                                Ok(node) => {
-                                    if let Some(usage_obj) = node.get("usage") {
-                                        let prompt_tokens = usage_obj.get("prompt_tokens").and_then(Value::as_i64).unwrap_or(0);
-                                        let completion_tokens = usage_obj.get("completion_tokens").and_then(Value::as_i64).unwrap_or(0);
-                                        let total_tokens = usage_obj.get("total_tokens").and_then(Value::as_i64).unwrap_or(0);
-                                        let stream_model = node.get("model").and_then(Value::as_str).unwrap_or("").to_string();
-                                        last_usage = Some(TokenUsage {
-                                            request_id: String::new(),
-                                            tenant_id: String::new(),
-                                            app_id: String::new(),
-                                            model: stream_model,
-                                            prompt_tokens,
-                                            completion_tokens,
-                                            total_tokens,
-                                            created_at: chrono::Utc::now(),
-                                        });
+                                    if !line.starts_with("data:") {
                                         continue;
                                     }
-                                    if tx.send(Ok(node)).await.is_err() {
-                                        let _ = usage_tx.send(last_usage);
-                                        return;
+                                    let payload = line.trim_start_matches("data:").trim();
+                                    if payload == "[DONE]" {
+                                        break;
+                                    }
+                                    match serde_json::from_str::<Value>(payload) {
+                                        Ok(node) => {
+                                            if let Some(usage_obj) = node.get("usage") {
+                                                let prompt_tokens = usage_obj.get("prompt_tokens").and_then(Value::as_i64).unwrap_or(0);
+                                                let completion_tokens = usage_obj.get("completion_tokens").and_then(Value::as_i64).unwrap_or(0);
+                                                let total_tokens = usage_obj.get("total_tokens").and_then(Value::as_i64).unwrap_or(0);
+                                                let stream_model = node.get("model").and_then(Value::as_str).unwrap_or("").to_string();
+                                                last_usage = Some(TokenUsage {
+                                                    request_id: String::new(),
+                                                    tenant_id: String::new(),
+                                                    app_id: String::new(),
+                                                    model: stream_model,
+                                                    prompt_tokens,
+                                                    completion_tokens,
+                                                    total_tokens,
+                                                    created_at: chrono::Utc::now(),
+                                                });
+                                                continue;
+                                            }
+                                            if tx.send(Ok(node)).await.is_err() {
+                                                let _ = usage_tx.send(last_usage);
+                                                return;
+                                            }
+                                        }
+                                        Err(e) => {
+                                            tracing::warn!("failed to parse SSE payload: {}, raw: {}", e, payload);
+                                            continue;
+                                        }
                                     }
                                 }
-                                Err(e) => {
-                                    tracing::warn!("failed to parse SSE payload: {}, raw: {}", e, payload);
-                                    continue;
-                                }
+                            }
+                            Err(e) => {
+                                let _ = tx.send(Err(anyhow::anyhow!(e))).await;
+                                let _ = usage_tx.send(last_usage);
+                                return;
                             }
                         }
                     }
-                    Err(e) => {
-                        let _ = tx.send(Err(anyhow::anyhow!(e))).await;
-                        let _ = usage_tx.send(last_usage);
-                        return;
+                    Ok(None) => {
+                        break;
+                    }
+                    Err(_) => {
+                        consecutive_timeouts += 1;
+                        tracing::warn!(
+                            consecutive_timeouts,
+                            max_consecutive_timeouts,
+                            "upstream SSE chunk timeout"
+                        );
+                        if consecutive_timeouts >= max_consecutive_timeouts {
+                            tracing::error!("upstream SSE too many consecutive timeouts, aborting");
+                            let _ = tx.send(Err(anyhow::anyhow!("upstream stream timeout"))).await;
+                            let _ = usage_tx.send(last_usage);
+                            return;
+                        }
+                        if tx.send(Ok(serde_json::json!({"type": "keepalive"}))).await.is_err() {
+                            let _ = usage_tx.send(last_usage);
+                            return;
+                        }
                     }
                 }
             }

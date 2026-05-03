@@ -19,20 +19,31 @@ impl AppState {
     pub async fn try_consume_tokens(&self, tokens: u64) -> anyhow::Result<bool> {
         let today = chrono::Utc::now().format("%Y-%m-%d").to_string();
         let key = format!("quota:{}", today);
+        let max = self.quota_policy.max_tokens_per_day;
 
         let mut conn = self.redis_client.get_multiplexed_async_connection().await?;
-        let current: u64 = conn.incr(&key, tokens).await?;
 
-        if current == tokens {
-            let _: () = conn.expire(&key, 86400).await?;
-        }
+        let script = redis::Script::new(r"
+            local current = redis.call('INCRBY', KEYS[1], ARGV[1])
+            if redis.call('TTL', KEYS[1]) == -1 then
+                redis.call('EXPIRE', KEYS[1], ARGV[2])
+            end
+            if current > tonumber(ARGV[3]) then
+                redis.call('DECRBY', KEYS[1], ARGV[1])
+                return 0
+            end
+            return 1
+        ");
 
-        if current > self.quota_policy.max_tokens_per_day {
-            let _: () = conn.decr(&key, tokens).await?;
-            return Ok(false);
-        }
+        let result: i32 = script
+            .key(&key)
+            .arg(tokens)
+            .arg(86400)
+            .arg(max)
+            .invoke_async(&mut conn)
+            .await?;
 
-        Ok(true)
+        Ok(result == 1)
     }
 
     pub async fn release_tokens(&self, tokens: u64) -> anyhow::Result<()> {

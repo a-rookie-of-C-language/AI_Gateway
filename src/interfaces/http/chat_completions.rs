@@ -94,6 +94,10 @@ pub async fn chat_completions(
                     if let Err(e) = state.try_consume_tokens(actual - estimated_tokens).await {
                         tracing::warn!(request_id = %trace.request_id, "quota top-up failed: {}", e);
                     }
+                } else if actual < estimated_tokens {
+                    if let Err(e) = state.release_tokens(estimated_tokens - actual).await {
+                        tracing::warn!(request_id = %trace.request_id, "quota rollback failed: {}", e);
+                    }
                 }
             }
             if let (Some(pt), Some(ct), Some(tt)) = (data.prompt_tokens, data.completion_tokens, data.total_tokens) {

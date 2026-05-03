@@ -17,7 +17,10 @@ use crate::infrastructure::provider::OpenAICompatibleGateway::OpenAICompatibleGa
 use crate::interfaces::http::middleware::MiddlewareState::MiddlewareState;
 
 pub async fn build_app() -> Result<App> {
-    let cfg = Config::load();
+    let cfg = Config::load().map_err(|e| {
+        tracing::error!("{}", e);
+        e
+    })?;
 
     let provider = Arc::new(OpenAICompatibleGateway::new(
         cfg.provider_base_url.clone(),
