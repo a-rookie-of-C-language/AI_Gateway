@@ -12,6 +12,7 @@ use crate::infrastructure::redis::pool::{RedisPool, RedisConnection};
 #[derive(Clone)]
 pub struct AppState {
     pub chat_service: Arc<dyn ChatService>,
+    pub provider_health_model: String,
     pub default_quota_policy: QuotaPolicy,
     pub quota_policy_dao: Option<Arc<dyn QuotaPolicyDao>>,
     pub redis_pool: RedisPool,
@@ -90,7 +91,7 @@ impl AppState {
         use crate::domain::core::gateway_orchestration::Message::Message;
 
         let req = CompletionRequest {
-            model: Some("health-check".to_string()),
+            model: Some(self.provider_health_model.clone()),
             messages: vec![Message {
                 role: "user".to_string(),
                 content: "ping".to_string(),

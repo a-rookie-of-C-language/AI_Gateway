@@ -82,6 +82,7 @@ pub async fn build_app() -> Result<App> {
 
     let app_state = AppState {
         chat_service,
+        provider_health_model: cfg.provider_model.clone(),
         default_quota_policy: QuotaPolicy {
             plan_code: "default".to_string(),
             max_tokens_per_day: cfg.max_tokens_per_day,

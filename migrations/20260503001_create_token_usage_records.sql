@@ -9,6 +9,6 @@ CREATE TABLE IF NOT EXISTS token_usage_records (
     created_at        TIMESTAMPTZ  NOT NULL DEFAULT NOW()
 );
 
-CREATE INDEX idx_usage_tenant_time ON token_usage_records (tenant_id, created_at DESC);
-CREATE INDEX idx_usage_model_time  ON token_usage_records (model, created_at DESC);
-CREATE INDEX idx_usage_tenant_model_time ON token_usage_records (tenant_id, model, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_usage_tenant_time ON token_usage_records (tenant_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_usage_model_time  ON token_usage_records (model, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_usage_tenant_model_time ON token_usage_records (tenant_id, model, created_at DESC);
