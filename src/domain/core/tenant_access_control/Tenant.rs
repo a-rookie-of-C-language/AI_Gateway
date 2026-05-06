@@ -6,6 +6,7 @@ use sqlx::FromRow;
 pub struct Tenant {
     pub tenant_id: String,
     pub app_id: String,
+    pub api_key_id: String,
     pub api_key_hash: String,
     pub enabled: bool,
     pub created_at: DateTime<Utc>,

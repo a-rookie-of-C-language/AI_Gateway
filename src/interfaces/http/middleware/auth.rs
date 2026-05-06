@@ -6,6 +6,7 @@ use axum::{
     response::Response,
     Json,
 };
+use argon2::{Argon2, PasswordHash, PasswordVerifier};
 use subtle::ConstantTimeEq;
 
 use crate::domain::core::tenant_access_control::TenantIdentity::TenantIdentity;
@@ -16,15 +17,23 @@ fn extract_api_key(auth_header: &str) -> Option<&str> {
     auth_header.strip_prefix("Bearer ").map(|s| s.trim())
 }
 
-fn hash_api_key(key: &str) -> String {
-    use argon2::{Argon2, PasswordHasher, password_hash::SaltString};
-    use argon2::password_hash::rand_core::OsRng;
+fn parse_tenant_api_key(api_key: &str) -> Option<(&str, &str)> {
+    let body = api_key.strip_prefix("ak_")?;
+    let (key_id, secret) = body.split_once('.')?;
+    if key_id.is_empty() || secret.is_empty() {
+        return None;
+    }
+    Some((key_id, secret))
+}
 
-    let salt = SaltString::generate(&mut OsRng);
-    let argon2 = Argon2::default();
-    argon2.hash_password(key.as_bytes(), &salt)
-        .map(|hash| hash.to_string())
-        .unwrap_or_else(|_| "hash_error".to_string())
+fn verify_secret(secret: &str, encoded_hash: &str) -> bool {
+    let parsed = match PasswordHash::new(encoded_hash) {
+        Ok(v) => v,
+        Err(_) => return false,
+    };
+    Argon2::default()
+        .verify_password(secret.as_bytes(), &parsed)
+        .is_ok()
 }
 
 pub async fn auth(
@@ -55,21 +64,26 @@ pub async fn auth(
     let mut authenticated = false;
 
     if let Some(ref tenant_dao) = state.tenant_dao {
-        let key_hash = hash_api_key(api_key);
-        match tenant_dao.find_by_api_key_hash(&key_hash).await {
+        let tenant_key = parse_tenant_api_key(api_key);
+        match tenant_key {
+            Some((key_id, secret)) => match tenant_dao.find_by_api_key_id(key_id).await {
             Ok(Some(tenant)) => {
-                tenant_id = tenant.tenant_id;
-                app_id = tenant.app_id;
-                authenticated = true;
-                if let Err(e) = tenant_dao.update_last_login(&tenant_id, &app_id).await {
-                    tracing::warn!("failed to update tenant last login: {}", e);
+                if verify_secret(secret, &tenant.api_key_hash) {
+                    tenant_id = tenant.tenant_id;
+                    app_id = tenant.app_id;
+                    authenticated = true;
+                    if let Err(e) = tenant_dao.update_last_login(&tenant_id, &app_id).await {
+                        tracing::warn!("failed to update tenant last login: {}", e);
+                    }
                 }
             }
             Ok(None) => {}
             Err(e) => {
                 tracing::error!("tenant dao error: {}", e);
             }
-        }
+            },
+            None => {}
+        };
     }
 
     if !authenticated {

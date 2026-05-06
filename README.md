@@ -7,6 +7,11 @@ AIGateway 是面向大模型应用的高并发模型网关与限流计费系统�
 - `POST /v1/chat/completions`
 - `POST /v1/chat/stream`（SSE）
 
+### 鉴权格式
+
+- 租户 API Key：`Authorization: Bearer ak_<key_id>.<secret>`
+- 管理密钥：`Authorization: Bearer <MASTER_API_KEY>`
+
 ### 流式事件格式（`/v1/chat/stream`）
 
 - `event: raw`，`data: <上游原始JSON>`  

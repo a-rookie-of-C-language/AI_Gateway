@@ -16,15 +16,15 @@ impl PostgresTenantDao {
 
 #[async_trait]
 impl TenantDao for PostgresTenantDao {
-    async fn find_by_api_key_hash(&self, api_key_hash: &str) -> anyhow::Result<Option<Tenant>> {
+    async fn find_by_api_key_id(&self, api_key_id: &str) -> anyhow::Result<Option<Tenant>> {
         let row = sqlx::query_as::<_, Tenant>(
             r#"
-            SELECT tenant_id, app_id, api_key_hash, enabled, created_at, updated_at
+            SELECT tenant_id, app_id, api_key_id, api_key_hash, enabled, created_at, updated_at
             FROM tenants
-            WHERE api_key_hash = $1 AND enabled = true
+            WHERE api_key_id = $1 AND enabled = true
             "#,
         )
-        .bind(api_key_hash)
+        .bind(api_key_id)
         .fetch_optional(&self.pool)
         .await?;
 
@@ -34,12 +34,13 @@ impl TenantDao for PostgresTenantDao {
     async fn insert(&self, tenant: &Tenant) -> anyhow::Result<()> {
         sqlx::query(
             r#"
-            INSERT INTO tenants (tenant_id, app_id, api_key_hash, enabled, created_at, updated_at)
-            VALUES ($1, $2, $3, $4, $5, $6)
+            INSERT INTO tenants (tenant_id, app_id, api_key_id, api_key_hash, enabled, created_at, updated_at)
+            VALUES ($1, $2, $3, $4, $5, $6, $7)
             "#,
         )
         .bind(&tenant.tenant_id)
         .bind(&tenant.app_id)
+        .bind(&tenant.api_key_id)
         .bind(&tenant.api_key_hash)
         .bind(tenant.enabled)
         .bind(tenant.created_at)
