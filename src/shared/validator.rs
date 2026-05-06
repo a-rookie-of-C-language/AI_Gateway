@@ -3,12 +3,9 @@ use axum::{
     Json,
 };
 
+use crate::constants::*;
 use crate::domain::core::gateway_orchestration::CompletionRequest::CompletionRequest;
 use crate::shared::response;
-
-const MAX_MESSAGES: usize = 128;
-const MAX_MESSAGE_CONTENT_LEN: usize = 128 * 1024;
-const VALID_ROLES: &[&str] = &["system", "user", "assistant", "tool"];
 
 pub fn validate_request(payload: &CompletionRequest) -> Result<(), (StatusCode, Json<serde_json::Value>)> {
     if payload.messages.is_empty() {
@@ -34,6 +31,52 @@ pub fn validate_request(payload: &CompletionRequest) -> Result<(), (StatusCode, 
             ));
         }
     }
+
+    if let Some(temp) = payload.temperature {
+        if temp < TEMPERATURE_MIN || temp > TEMPERATURE_MAX {
+            return Err(response::err(
+                StatusCode::BAD_REQUEST,
+                &format!("temperature must be between {} and {}", TEMPERATURE_MIN, TEMPERATURE_MAX),
+            ));
+        }
+    }
+
+    if let Some(top_p) = payload.top_p {
+        if top_p < TOP_P_MIN || top_p > TOP_P_MAX {
+            return Err(response::err(
+                StatusCode::BAD_REQUEST,
+                &format!("top_p must be between {} and {}", TOP_P_MIN, TOP_P_MAX),
+            ));
+        }
+    }
+
+    if let Some(max_tokens) = payload.max_tokens {
+        if max_tokens == 0 || max_tokens > MAX_TOKENS_PER_REQUEST {
+            return Err(response::err(
+                StatusCode::BAD_REQUEST,
+                &format!("max_tokens must be between 1 and {}", MAX_TOKENS_PER_REQUEST),
+            ));
+        }
+    }
+
+    if let Some(fp) = payload.frequency_penalty {
+        if fp < FREQUENCY_PENALTY_MIN || fp > FREQUENCY_PENALTY_MAX {
+            return Err(response::err(
+                StatusCode::BAD_REQUEST,
+                &format!("frequency_penalty must be between {} and {}", FREQUENCY_PENALTY_MIN, FREQUENCY_PENALTY_MAX),
+            ));
+        }
+    }
+
+    if let Some(pp) = payload.presence_penalty {
+        if pp < PRESENCE_PENALTY_MIN || pp > PRESENCE_PENALTY_MAX {
+            return Err(response::err(
+                StatusCode::BAD_REQUEST,
+                &format!("presence_penalty must be between {} and {}", PRESENCE_PENALTY_MIN, PRESENCE_PENALTY_MAX),
+            ));
+        }
+    }
+
     Ok(())
 }
 
@@ -168,6 +211,82 @@ mod tests {
                 content: "World".to_string(),
             },
         ]);
+        let result = validate_request(&req);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_temperature_out_of_range() {
+        let mut req = make_request(vec![Message {
+            role: "user".to_string(),
+            content: "hello".to_string(),
+        }]);
+        req.temperature = Some(3.0);
+        let result = validate_request(&req);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_temperature_valid() {
+        let mut req = make_request(vec![Message {
+            role: "user".to_string(),
+            content: "hello".to_string(),
+        }]);
+        req.temperature = Some(1.5);
+        assert!(validate_request(&req).is_ok());
+    }
+
+    #[test]
+    fn test_top_p_out_of_range() {
+        let mut req = make_request(vec![Message {
+            role: "user".to_string(),
+            content: "hello".to_string(),
+        }]);
+        req.top_p = Some(1.5);
+        let result = validate_request(&req);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_max_tokens_zero() {
+        let mut req = make_request(vec![Message {
+            role: "user".to_string(),
+            content: "hello".to_string(),
+        }]);
+        req.max_tokens = Some(0);
+        let result = validate_request(&req);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_max_tokens_too_large() {
+        let mut req = make_request(vec![Message {
+            role: "user".to_string(),
+            content: "hello".to_string(),
+        }]);
+        req.max_tokens = Some(MAX_TOKENS_PER_REQUEST + 1);
+        let result = validate_request(&req);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_frequency_penalty_out_of_range() {
+        let mut req = make_request(vec![Message {
+            role: "user".to_string(),
+            content: "hello".to_string(),
+        }]);
+        req.frequency_penalty = Some(-3.0);
+        let result = validate_request(&req);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_presence_penalty_out_of_range() {
+        let mut req = make_request(vec![Message {
+            role: "user".to_string(),
+            content: "hello".to_string(),
+        }]);
+        req.presence_penalty = Some(3.0);
         let result = validate_request(&req);
         assert!(result.is_err());
     }

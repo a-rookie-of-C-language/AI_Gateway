@@ -24,6 +24,7 @@ use crate::infrastructure::http::AppState::AppState;
 use crate::infrastructure::http::build_router::build_router;
 use crate::infrastructure::provider::DefaultProviderRouter::DefaultProviderRouter;
 use crate::infrastructure::provider::OpenAICompatibleGateway::OpenAICompatibleGateway;
+use crate::infrastructure::redis::pool::RedisPool;
 use crate::interfaces::http::middleware::MiddlewareState::MiddlewareState;
 
 pub async fn build_app() -> Result<App> {
@@ -56,9 +57,9 @@ pub async fn build_app() -> Result<App> {
 
     let chat_service: Arc<dyn ChatService> = Arc::new(ChatAppService::new(gateways, router));
 
-    let redis_client = redis::Client::open(cfg.redis_addr.clone())?;
-    let rate_limit_dao: Arc<dyn RateLimitDao> = Arc::new(RedisRateLimitDao::new(redis_client.clone()));
-    let quota_policy_dao: Arc<dyn QuotaPolicyDao> = Arc::new(RedisQuotaPolicyDao::new(redis_client.clone()));
+    let redis_pool: RedisPool = RedisPool::new(&cfg.redis_addr).await?;
+    let rate_limit_dao: Arc<dyn RateLimitDao> = Arc::new(RedisRateLimitDao::new(redis_pool.clone()));
+    let quota_policy_dao: Arc<dyn QuotaPolicyDao> = Arc::new(RedisQuotaPolicyDao::new(redis_pool.clone()));
 
     let (token_usage_dao, pg_pool, tenant_dao, audit_log_dao): (Option<Arc<dyn TokenUsageDao>>, Option<sqlx::PgPool>, Option<Arc<dyn TenantDao>>, Option<Arc<dyn AuditLogDao>>) = match &cfg.database_url {
         Some(url) => {
@@ -88,7 +89,7 @@ pub async fn build_app() -> Result<App> {
             rate_limit_per_min: None,
         },
         quota_policy_dao: Some(quota_policy_dao),
-        redis_client,
+        redis_pool,
         token_usage_dao,
         audit_log_dao,
         pg_pool,

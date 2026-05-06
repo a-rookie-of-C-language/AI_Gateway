@@ -3,6 +3,7 @@
 mod application;
 mod bootstrap;
 mod config;
+mod constants;
 mod domain;
 mod infrastructure;
 mod interfaces;

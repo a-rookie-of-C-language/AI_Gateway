@@ -11,6 +11,7 @@ use crate::domain::core::tenant_access_control::TenantIdentity::TenantIdentity;
 use crate::domain::supporting::observability_audit::TraceRecord::TraceRecord;
 use crate::infrastructure::http::AppState::AppState;
 use crate::shared::json_extractor::UnifiedJson;
+use crate::shared::quota_checker::{estimate_request_tokens, check_and_consume_tokens};
 use crate::shared::response;
 use crate::shared::validator::validate_request;
 
@@ -22,20 +23,8 @@ pub async fn chat_completions(
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
     validate_request(&payload)?;
 
-    let estimated_tokens: u64 = payload
-        .messages
-        .iter()
-        .map(|m| crate::shared::token_estimator::estimate_tokens(&m.content) + 4)
-        .sum();
-
-    match state.try_consume_tokens(estimated_tokens, &tenant.tenant_id, &tenant.app_id).await {
-        Ok(true) => {}
-        Ok(false) => return Err(response::err(StatusCode::PAYMENT_REQUIRED, "quota exceeded")),
-        Err(e) => {
-            tracing::error!("quota check failed: {}", e);
-            return Err(response::err(StatusCode::INTERNAL_SERVER_ERROR, "quota service unavailable"));
-        }
-    }
+    let estimated_tokens = estimate_request_tokens(&payload);
+    check_and_consume_tokens(&state, estimated_tokens, &tenant).await?;
 
     let request_id = headers
         .get("x-request-id")

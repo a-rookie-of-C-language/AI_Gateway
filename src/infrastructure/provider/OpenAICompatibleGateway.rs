@@ -5,11 +5,13 @@ use std::time::Duration;
 use tokio::sync::{mpsc, oneshot};
 use tokio_stream::wrappers::ReceiverStream;
 
+use crate::constants::{MAX_SSE_BUFFER_SIZE, SSE_CHUNK_TIMEOUT_SECS, MAX_CONSECUTIVE_TIMEOUTS};
 use crate::domain::core::gateway_orchestration::ChatGateway::ChatGateway;
 use crate::domain::core::gateway_orchestration::CompletionRequest::CompletionRequest;
 use crate::domain::core::gateway_orchestration::CompletionResult::CompletionResult;
 use crate::domain::core::quota_billing::StreamingCompletion::StreamingCompletion;
 use crate::domain::core::quota_billing::TokenUsage::TokenUsage;
+use crate::infrastructure::provider::request_builder::build_request_body;
 
 pub struct OpenAICompatibleGateway {
     pub client: Client,
@@ -40,31 +42,7 @@ impl OpenAICompatibleGateway {
 #[async_trait]
 impl ChatGateway for OpenAICompatibleGateway {
     async fn complete(&self, req: CompletionRequest) -> anyhow::Result<CompletionResult> {
-        let model = req
-            .model
-            .clone()
-            .filter(|s| !s.is_empty())
-            .unwrap_or_else(|| self.default_model.clone());
-
-        let messages: Vec<Value> = req
-            .messages
-            .iter()
-            .map(|m| serde_json::json!({ "role": m.role, "content": m.content }))
-            .collect();
-
-        let mut body = serde_json::json!({
-            "model": model,
-            "messages": messages,
-            "stream": false
-        });
-
-        if let Some(v) = req.temperature { body["temperature"] = serde_json::json!(v); }
-        if let Some(v) = req.max_tokens { body["max_tokens"] = serde_json::json!(v); }
-        if let Some(v) = req.top_p { body["top_p"] = serde_json::json!(v); }
-        if let Some(v) = req.frequency_penalty { body["frequency_penalty"] = serde_json::json!(v); }
-        if let Some(v) = req.presence_penalty { body["presence_penalty"] = serde_json::json!(v); }
-        if let Some(ref v) = req.tools { body["tools"] = v.clone(); }
-        if let Some(ref v) = req.response_format { body["response_format"] = v.clone(); }
+        let body = build_request_body(&req, &self.default_model, false);
 
         let response = self
             .client
@@ -77,7 +55,8 @@ impl ChatGateway for OpenAICompatibleGateway {
         if !response.status().is_success() {
             let status = response.status();
             let body = response.text().await.unwrap_or_default();
-            anyhow::bail!("provider call failed: status={}, body={}", status, body);
+            tracing::error!("provider call failed: status={}, body={}", status, body);
+            anyhow::bail!("provider call failed with status {}", status);
         }
 
         let body: Value = response.json().await?;
@@ -119,32 +98,7 @@ impl ChatGateway for OpenAICompatibleGateway {
     }
 
     async fn stream_complete(&self, req: CompletionRequest) -> anyhow::Result<StreamingCompletion> {
-        let model = req
-            .model
-            .clone()
-            .filter(|s| !s.is_empty())
-            .unwrap_or_else(|| self.default_model.clone());
-
-        let messages: Vec<Value> = req
-            .messages
-            .iter()
-            .map(|m| serde_json::json!({ "role": m.role, "content": m.content }))
-            .collect();
-
-        let mut body = serde_json::json!({
-            "model": model,
-            "messages": messages,
-            "stream": true,
-            "stream_options": {"include_usage": true}
-        });
-
-        if let Some(v) = req.temperature { body["temperature"] = serde_json::json!(v); }
-        if let Some(v) = req.max_tokens { body["max_tokens"] = serde_json::json!(v); }
-        if let Some(v) = req.top_p { body["top_p"] = serde_json::json!(v); }
-        if let Some(v) = req.frequency_penalty { body["frequency_penalty"] = serde_json::json!(v); }
-        if let Some(v) = req.presence_penalty { body["presence_penalty"] = serde_json::json!(v); }
-        if let Some(ref v) = req.tools { body["tools"] = v.clone(); }
-        if let Some(ref v) = req.response_format { body["response_format"] = v.clone(); }
+        let body = build_request_body(&req, &self.default_model, true);
 
         let response = self
             .client
@@ -157,15 +111,15 @@ impl ChatGateway for OpenAICompatibleGateway {
         if !response.status().is_success() {
             let status = response.status();
             let body = response.text().await.unwrap_or_default();
-            anyhow::bail!("provider stream failed: status={}, body={}", status, body);
+            tracing::error!("provider stream failed: status={}, body={}", status, body);
+            anyhow::bail!("provider stream failed with status {}", status);
         }
 
         let mut upstream = response.bytes_stream();
         let (tx, rx) = mpsc::channel::<anyhow::Result<Value>>(128);
         let (usage_tx, usage_rx) = oneshot::channel::<Option<TokenUsage>>();
 
-        let chunk_timeout = Duration::from_secs(30);
-        let max_consecutive_timeouts = 3;
+        let chunk_timeout = Duration::from_secs(SSE_CHUNK_TIMEOUT_SECS);
 
         tokio::spawn(async move {
             use futures_util::StreamExt;
@@ -180,6 +134,14 @@ impl ChatGateway for OpenAICompatibleGateway {
                         match item {
                             Ok(bytes) => {
                                 buf.extend_from_slice(&bytes);
+
+                                if buf.len() > MAX_SSE_BUFFER_SIZE {
+                                    tracing::error!("SSE buffer overflow ({} bytes), aborting stream", buf.len());
+                                    let _ = tx.send(Err(anyhow::anyhow!("stream buffer overflow"))).await;
+                                    let _ = usage_tx.send(last_usage);
+                                    return;
+                                }
+
                                 while let Some(idx) = buf.iter().position(|&b| b == b'\n') {
                                     let line_bytes = buf[..idx].to_vec();
                                     buf.drain(..idx + 1);
@@ -241,10 +203,10 @@ impl ChatGateway for OpenAICompatibleGateway {
                         consecutive_timeouts += 1;
                         tracing::warn!(
                             consecutive_timeouts,
-                            max_consecutive_timeouts,
+                            MAX_CONSECUTIVE_TIMEOUTS,
                             "upstream SSE chunk timeout"
                         );
-                        if consecutive_timeouts >= max_consecutive_timeouts {
+                        if consecutive_timeouts >= MAX_CONSECUTIVE_TIMEOUTS {
                             tracing::error!("upstream SSE too many consecutive timeouts, aborting");
                             let _ = tx.send(Err(anyhow::anyhow!("upstream stream timeout"))).await;
                             let _ = usage_tx.send(last_usage);

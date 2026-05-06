@@ -4,3 +4,4 @@ pub mod MockChatGateway;
 pub mod OpenAICompatibleGateway;
 #[allow(non_snake_case)]
 pub mod DefaultProviderRouter;
+pub mod request_builder;

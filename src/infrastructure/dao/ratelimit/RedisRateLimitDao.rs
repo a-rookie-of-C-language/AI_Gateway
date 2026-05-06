@@ -2,6 +2,7 @@
 
 use crate::domain::supporting::traffic_governance::RateLimitDao::RateLimitDao;
 use crate::domain::supporting::traffic_governance::RateLimitDecision::RateLimitDecision;
+use crate::infrastructure::redis::pool::{RedisPool, RedisConnection};
 
 const SLIDING_WINDOW_LUA: &str = r#"
 local key = KEYS[1]
@@ -34,12 +35,12 @@ end
 "#;
 
 pub struct RedisRateLimitDao {
-    pub client: redis::Client,
+    pool: RedisPool,
 }
 
 impl RedisRateLimitDao {
-    pub fn new(client: redis::Client) -> Self {
-        Self { client }
+    pub fn new(pool: RedisPool) -> Self {
+        Self { pool }
     }
 }
 
@@ -51,7 +52,7 @@ impl RateLimitDao for RedisRateLimitDao {
         limit: u64,
         window_ms: u64,
     ) -> anyhow::Result<RateLimitDecision> {
-        let mut conn = self.client.get_multiplexed_async_connection().await?;
+        let mut conn = self.pool.get_connection().await?;
         let now_ms = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)?
             .as_millis() as u64;

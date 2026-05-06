@@ -17,11 +17,14 @@ fn extract_api_key(auth_header: &str) -> Option<&str> {
 }
 
 fn hash_api_key(key: &str) -> String {
-    use std::collections::hash_map::DefaultHasher;
-    use std::hash::{Hash, Hasher};
-    let mut hasher = DefaultHasher::new();
-    key.hash(&mut hasher);
-    format!("{:016x}", hasher.finish())
+    use argon2::{Argon2, PasswordHasher, password_hash::SaltString};
+    use argon2::password_hash::rand_core::OsRng;
+
+    let salt = SaltString::generate(&mut OsRng);
+    let argon2 = Argon2::default();
+    argon2.hash_password(key.as_bytes(), &salt)
+        .map(|hash| hash.to_string())
+        .unwrap_or_else(|_| "hash_error".to_string())
 }
 
 pub async fn auth(

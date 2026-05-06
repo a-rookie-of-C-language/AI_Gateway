@@ -1,6 +1,8 @@
 use std::env;
 use std::fmt;
 
+use crate::constants::*;
+
 #[derive(Debug)]
 pub enum ConfigError {
     MissingMasterApiKey { env: String },
@@ -64,13 +66,13 @@ impl Config {
             http_addr: env_or("HTTP_ADDR", "0.0.0.0:8080"),
             master_api_key: env_or("MASTER_API_KEY", DEFAULT_MASTER_API_KEY),
             redis_addr: env_or("REDIS_ADDR", "redis://127.0.0.1:6379"),
-            rate_limit_per_min: env_or("RATE_LIMIT_PER_MIN", "120").parse().unwrap_or(120),
-            rate_limit_tenant_per_min: env_or("RATE_LIMIT_TENANT_PER_MIN", "240").parse().unwrap_or(240),
-            rate_limit_route_per_min: env_or("RATE_LIMIT_ROUTE_PER_MIN", "120").parse().unwrap_or(120),
-            rate_limit_model_per_min: env_or("RATE_LIMIT_MODEL_PER_MIN", "120").parse().unwrap_or(120),
-            rate_limit_window_ms: env_or("RATE_LIMIT_WINDOW_MS", "60000").parse().unwrap_or(60000),
+            rate_limit_per_min: env_or("RATE_LIMIT_PER_MIN", &DEFAULT_RATE_LIMIT_PER_MIN.to_string()).parse().unwrap_or(DEFAULT_RATE_LIMIT_PER_MIN),
+            rate_limit_tenant_per_min: env_or("RATE_LIMIT_TENANT_PER_MIN", &DEFAULT_RATE_LIMIT_TENANT_PER_MIN.to_string()).parse().unwrap_or(DEFAULT_RATE_LIMIT_TENANT_PER_MIN),
+            rate_limit_route_per_min: env_or("RATE_LIMIT_ROUTE_PER_MIN", &DEFAULT_RATE_LIMIT_ROUTE_PER_MIN.to_string()).parse().unwrap_or(DEFAULT_RATE_LIMIT_ROUTE_PER_MIN),
+            rate_limit_model_per_min: env_or("RATE_LIMIT_MODEL_PER_MIN", &DEFAULT_RATE_LIMIT_MODEL_PER_MIN.to_string()).parse().unwrap_or(DEFAULT_RATE_LIMIT_MODEL_PER_MIN),
+            rate_limit_window_ms: env_or("RATE_LIMIT_WINDOW_MS", &DEFAULT_RATE_LIMIT_WINDOW_MS.to_string()).parse().unwrap_or(DEFAULT_RATE_LIMIT_WINDOW_MS),
             rate_limit_fail_open: env_or("RATE_LIMIT_FAIL_OPEN", "true").parse().unwrap_or(true),
-            max_tokens_per_day: env_or("MAX_TOKENS_PER_DAY", "1000000").parse().unwrap_or(1_000_000),
+            max_tokens_per_day: env_or("MAX_TOKENS_PER_DAY", &DEFAULT_MAX_TOKENS_PER_DAY.to_string()).parse().unwrap_or(DEFAULT_MAX_TOKENS_PER_DAY),
             provider_base_url: env_or("PROVIDER_BASE_URL", "https://api.openai.com/v1"),
             provider_api_key: env_or("PROVIDER_API_KEY", ""),
             provider_model: env_or("PROVIDER_MODEL", "gpt-4.1-mini"),

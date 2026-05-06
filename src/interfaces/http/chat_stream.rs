@@ -9,15 +9,15 @@ use axum::{
 };
 use futures_util::{stream, StreamExt};
 
+use crate::constants::{MAX_ROLLBACK_RETRIES, RETRY_BACKOFF_BASE_MS, STREAMING_USAGE_TIMEOUT_SECS};
 use crate::domain::core::gateway_orchestration::CompletionRequest::CompletionRequest;
 use crate::domain::core::tenant_access_control::TenantIdentity::TenantIdentity;
 use crate::domain::supporting::observability_audit::TraceRecord::TraceRecord;
 use crate::infrastructure::http::AppState::AppState;
 use crate::shared::json_extractor::UnifiedJson;
+use crate::shared::quota_checker::{estimate_request_tokens, check_and_consume_tokens};
 use crate::shared::response;
 use crate::shared::validator::validate_request;
-
-const MAX_ROLLBACK_RETRIES: u32 = 3;
 
 async fn retry_release_tokens(
     state: &AppState,
@@ -37,7 +37,7 @@ async fn retry_release_tokens(
                     "quota rollback failed, retrying"
                 );
                 if attempt < MAX_ROLLBACK_RETRIES - 1 {
-                    tokio::time::sleep(Duration::from_millis(100 * 2u64.pow(attempt))).await;
+                    tokio::time::sleep(Duration::from_millis(RETRY_BACKOFF_BASE_MS * 2u64.pow(attempt))).await;
                 }
             }
         }
@@ -53,20 +53,8 @@ pub async fn chat_stream(
 ) -> Result<Sse<futures_util::stream::BoxStream<'static, Result<Event, Infallible>>>, (StatusCode, Json<serde_json::Value>)> {
     validate_request(&payload)?;
 
-    let estimated_tokens: u64 = payload
-        .messages
-        .iter()
-        .map(|m| crate::shared::token_estimator::estimate_tokens(&m.content) + 4)
-        .sum();
-
-    match state.try_consume_tokens(estimated_tokens, &tenant.tenant_id, &tenant.app_id).await {
-        Ok(true) => {}
-        Ok(false) => return Err(response::err(StatusCode::PAYMENT_REQUIRED, "quota exceeded")),
-        Err(e) => {
-            tracing::error!("quota check failed: {}", e);
-            return Err(response::err(StatusCode::INTERNAL_SERVER_ERROR, "quota service unavailable"));
-        }
-    }
+    let estimated_tokens = estimate_request_tokens(&payload);
+    check_and_consume_tokens(&state, estimated_tokens, &tenant).await?;
 
     let request_id = headers
         .get("x-request-id")
@@ -113,7 +101,7 @@ pub async fn chat_stream(
         let req_id = trace.request_id.clone();
         let app_state = state.clone();
         tokio::spawn(async move {
-            let result = tokio::time::timeout(Duration::from_secs(10), async {
+            let result = tokio::time::timeout(Duration::from_secs(STREAMING_USAGE_TIMEOUT_SECS), async {
                 match usage_rx.await {
                     Ok(Some(mut usage)) => {
                         if usage.request_id.is_empty() {
